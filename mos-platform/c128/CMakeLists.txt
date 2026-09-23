@@ -10,6 +10,7 @@ install(FILES
   _vdc.h
   ../c64/_vic2.h
   c128.h
+  bank1.h
   ../c64/charset.h
 TYPE INCLUDE)
 install(FILES link.ld TYPE LIB)
@@ -30,7 +31,9 @@ add_platform_library(c128-c
   c128.c
   devnum.s
   kernal.S
+  bank1.s
 )
 target_include_directories(c128-c BEFORE PUBLIC .)
 target_include_directories(c128-c BEFORE PUBLIC ../c64)
+target_link_libraries(c128-c PRIVATE common-asminc)
 

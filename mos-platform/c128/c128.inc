@@ -222,6 +222,13 @@ MMU_CFG_RAM3     = %11111111    ; Bank 3 full RAM
 MMU_CFG_IFROM    = %01010111    ; Bank 1 with Internal Function RAM/ROM
 MMU_CFG_EFROM    = %01101011    ; Bank 1 with External Function RAM/ROM
 
+RCR              = $D506        ; RAM Configuration Register
+; bit 3 = Shared-Hi enable, bit 2 = Shared-Lo enable, bits 1-0 = shared
+; size (00=1K, 01=4K, 10=8K, 11=16K). Power-on default is 1K Shared-Lo
+; only (Shared-Hi disabled).
+RCR_SHARED_LO_1K  = %00000100
+RCR_SHARED_LO_4K  = %00000101
+
 ; ---------------------------------------------------------------------------
 ; Super CPU
 
