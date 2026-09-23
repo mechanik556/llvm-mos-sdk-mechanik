@@ -20,6 +20,23 @@ MEMORY {
      * this region is never BASIC-LOADed directly; it's populated by
      * bank1-load.c's own copy mechanism at program startup instead. */
     bank1 (rw) : ORIGIN = 0x1000, LENGTH = 0xB000
+    /* Common-RAM-resident code: anything that executes the actual MMU_CR
+     * bank switch (c128_bank1_call, __c128bank1_copy_chunk, bank1.s) must
+     * live here, not in ordinary `ram` - once CR selects bank 1, the next
+     * instruction fetch has to land on the same physical bytes regardless
+     * of which bank is mapped, which is only guaranteed within the 4K
+     * Common-RAM-Lo window bank1.s configures ($0000-$0FFF). Found via
+     * VICE testing (work/M0_C128_BANKING_PLAN.md section 4.1 task 4/6 in
+     * llvm-mos-mechanik), not assumed - the first implementation forgot
+     * this and hung mid-switch, fetching garbage from unpopulated bank-1
+     * memory. $0800-$0FFF avoids $0000-$03FF (BASIC/KERNAL's own zero
+     * page/workspace, confirmably not free even in bank 1 - see
+     * research/c128_mmu_reference.md's FRE(1)=$0400-$FEFF finding) and
+     * the conventional $0400-$07E7 screen memory range, at the cost of
+     * competing with the low end of bank1's own budget for those 2K -
+     * acceptable given how little of it this needs (under 100 bytes
+     * today). */
+    common_code (rw) : ORIGIN = 0x0800, LENGTH = 0x0800
 }
 
 INCLUDE commodore.ld
@@ -35,7 +52,12 @@ SECTIONS {
     .c128bank1.text : { *(.c128bank1.text) } >bank1 AT>ram
     .c128bank1.data : { *(.c128bank1.data) } >bank1 AT>ram
     .c128bank1.bss (NOLOAD) : { *(.c128bank1.bss) } >bank1
+    .c128commoncode : { *(.c128commoncode.*) } >common_code AT>ram
 }
+
+__c128commoncode_vma_start = ADDR(.c128commoncode);
+__c128commoncode_lma_start = LOADADDR(.c128commoncode);
+__c128commoncode_size = SIZEOF(.c128commoncode);
 
 __c128bank1_text_vma_start = ADDR(.c128bank1.text);
 __c128bank1_text_lma_start = LOADADDR(.c128bank1.text);
