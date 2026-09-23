@@ -88,12 +88,18 @@ __rcrsave:
 ; VMA, below) right after the Common-RAM bump above and before anything
 ; else - in particular before .init.201's __c128bank1_load, which is the
 ; first thing that actually calls __c128bank1_copy_chunk. This copy
-; never crosses a bank boundary itself (both $0C00-$0DFF and this
+; never crosses a bank boundary itself (both the common-code area and this
 ; content's LMA in `ram` are ordinary bank-0 memory, simultaneously
 ; reachable without any switch), so a plain call to the C library's own
 ; memcpy is fine here, unlike the bank-1 case.
 .section .init.012,"ax",@progbits
 	jsr __c128bank1_load_common_code
+
+; Put the original contents of that area back at exit, before the RCR
+; restore (.fini.989) and MMU restore (.fini.990). Nothing after this
+; point may call into bank 1.
+.section .fini.988,"ax",@progbits
+	jsr __c128bank1_restore_common_code
 
 ; Populate MOS_C128_BANK1_CODE/_DATA content (bank1-load.c) after
 ; ordinary .data/.bss init (.init.200) and after the Common-RAM bump

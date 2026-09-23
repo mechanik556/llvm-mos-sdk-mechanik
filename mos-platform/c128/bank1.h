@@ -52,8 +52,16 @@
 // * Declare bank-1 globals volatile if you need to be sure they are really
 //   loaded/stored: LTO may otherwise constant-fold a never-written global.
 //
-// * Not usable together with RS-232: the Common-RAM trampoline code lives
-//   in the RS-232 buffer area ($0C00-$0DFF, see link.ld).
+// * The small Common-RAM trampoline code lives by default at the low end of
+//   BASIC's runtime stack ($0800, ~60 bytes of a 512-byte area). That
+//   stack is only used by the BASIC interpreter, so bare-metal programs -
+//   including ones using RS-232, tape, or sprites - are unaffected; the
+//   original bytes are saved at startup and restored at exit. A program
+//   that calls into the BASIC interpreter must move it, e.g.
+//     -Wl,--defsym=__c128_common_code_origin=0x0C00   (RS-232 buffers)
+//   (also 0x0B00 tape buffer, 0x0E00 sprite definitions; see link.ld for
+//   the full list and what is NOT usable). The area must be inside
+//   $0000-$0FFF.
 //
 // * Initialized and zero-initialized bank-1 data are populated at program
 //   startup (bank1-load.c). Bank-1 memory is bank1's $1000-$BFFF.

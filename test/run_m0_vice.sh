@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build and run an M0 bank-1 test under VICE x128, then print zero page
 # ($2A onward) and the decoded text screen. Usage: run_m0_vice.sh <test.c>
-# Env overrides: MOS_CLANG, SDK_INSTALL, VICE_X128, WORK.
+# Env overrides: EXTRA_FLAGS (extra driver flags), MOS_CLANG, SDK_INSTALL, VICE_X128, WORK.
 # Notes: -initbreak needs a DECIMAL address; monitor `echo` output is not
 # capturable, so results are dumped to files with `save`. Run from Git Bash.
 set -e
@@ -13,7 +13,7 @@ WORK="${WORK:-/tmp/mos_test}"
 mkdir -p "$WORK"; cd "$WORK"
 NAME=$(basename "$SRC" .c)
 "$MOS_CLANG" --config "$SDK_INSTALL/bin/mos-c128.cfg" -o "$NAME.prg" \
-  -Wl,-Map="$NAME.map" "$SRC"
+  -Wl,-Map="$NAME.map" $EXTRA_FLAGS "$SRC"
 EXIT_HEX=$(grep -E "\(\.text\.exit\)" "$NAME.map" | head -1 | awk '{print $1}')
 EXIT_DEC=$((16#$EXIT_HEX))
 echo "exit at \$$EXIT_HEX ($EXIT_DEC)"

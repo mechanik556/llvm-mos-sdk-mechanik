@@ -27,22 +27,32 @@ extern void __c128bank1_bss_size;
 extern char __c128commoncode_vma_start[];
 extern char __c128commoncode_lma_start[];
 extern void __c128commoncode_size;
+extern char __c128commoncode_save_start[];
 
 void __c128bank1_copy_chunk(char *dest, const char *src, unsigned char count);
 
 // Populates .c128commoncode (c128_bank1_call/__c128bank1_copy_chunk's own
 // code, bank1.s) at startup - it has the exact same "ordinary PRG loading
-// doesn't populate it" problem bank-1 content does, since its VMA
-// ($0C00-$0DFF) isn't contiguous with the rest of the loaded image
-// either. Unlike bank-1 content, this copy never crosses a bank
+// doesn't populate it" problem bank-1 content does, since its VMA (by
+// default $0800, see link.ld) isn't contiguous with the rest of the loaded
+// image either. Unlike bank-1 content, this copy never crosses a bank
 // boundary (both ends are ordinary bank-0 memory), so a plain memcpy is
 // correct and sufficient - no chunking or __c128bank1_copy_chunk needed.
-// Triggered from bank1.s's own .init.012, before anything (including
-// __c128bank1_load below) could call the functions this places - see
-// that file for why bank1.s does the triggering rather than this file
-// registering itself.
+// The area's original contents (by default the idle low end of BASIC's
+// runtime stack) are saved first and put back by
+// __c128bank1_restore_common_code at exit, so the program leaves that
+// memory as it found it. Both are triggered from bank1.s (.init.012 /
+// .fini.988), before anything (including __c128bank1_load below) could
+// call the functions this places - see that file for why bank1.s does the
+// triggering rather than this file registering itself.
 void __c128bank1_load_common_code(void) {
-  memcpy(__c128commoncode_vma_start, __c128commoncode_lma_start,
+  unsigned short size = (unsigned short)&__c128commoncode_size;
+  memcpy(__c128commoncode_save_start, __c128commoncode_vma_start, size);
+  memcpy(__c128commoncode_vma_start, __c128commoncode_lma_start, size);
+}
+
+void __c128bank1_restore_common_code(void) {
+  memcpy(__c128commoncode_vma_start, __c128commoncode_save_start,
          (unsigned short)&__c128commoncode_size);
 }
 

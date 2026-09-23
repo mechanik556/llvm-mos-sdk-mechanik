@@ -8,6 +8,9 @@
 __basic_zp_start = 0x000A;
 __basic_zp_end = 0x0090;
 
+PROVIDE(__c128_common_code_origin = 0x0800);
+PROVIDE(__c128_common_code_length = 0x0200);
+
 MEMORY {
     ram (rw) : ORIGIN = 0x1C01, LENGTH = 0xA3FF
     /* RAM bank 1, for MOS_C128_BANK1_CODE/_DATA-placed content (bank1.h).
@@ -28,16 +31,27 @@ MEMORY {
      * Common-RAM-Lo window bank1.s configures ($0000-$0FFF). The first
      * implementation forgot this and hung mid-switch (found via VICE).
      *
-     * $0C00-$0DFF is the RS-232 input/output buffer pair - per Compute's
-     * Mapping the Commodore 128 (ch. on free memory, "probably the best
-     * area for short ML routines"), free unless the program uses RS-232,
-     * and unlike the cassette buffer ($0B00) it survives a reset. Other
-     * candidates in the window were rejected: $0000-$03FF KERNAL/BASIC
-     * workspace, $0400-$07E7 text screen, $0800-$09FF BASIC runtime stack,
-     * $0A00-$0AFF system vectors/editor variables, $0B00 disk-boot/tape
-     * buffer, $0E00-$0FFF default sprite definitions. Programs that open
-     * RS-232 must not use bank-1 placement (or relocate this region). */
-    common_code (rw) : ORIGIN = 0x0C00, LENGTH = 0x0200
+     * Default: the low end of BASIC's runtime stack, $0800-$09FF (512
+     * bytes). BASIC fills that stack from $09FF downward and only the
+     * BASIC interpreter uses it (per Compute's Mapping the Commodore 128),
+     * and the interpreter is not running while a bare-metal C program is,
+     * so the low end is effectively free. bank1-load.c saves the original
+     * bytes at startup and restores them at exit, so even a program started
+     * from inside a BASIC FOR/GOSUB comes back intact. Consequence: a
+     * program that calls into the BASIC interpreter must pick another area.
+     *
+     * Override with --defsym (both symbols), e.g. in the driver command:
+     *   -Wl,--defsym=__c128_common_code_origin=0x0C00
+     *   -Wl,--defsym=__c128_common_code_length=0x0200
+     * Other candidates inside the Common-RAM-Lo window:
+     *   $0C00-$0DFF  RS-232 buffers - free unless RS-232 is used (or move
+     *                RIBUF/ROBUF, $C8-$CB, elsewhere)
+     *   $0B00-$0BBF  cassette/disk-boot buffer - free unless tape is used
+     *   $0E00-$0FFF  default sprite definitions - free unless sprites used
+     *   NOT usable:  $0000-$03FF KERNAL workspace, $0400-$07E7 text screen,
+     *                $0A00-$0AFF system vectors/editor variables.
+     * The chosen area must lie within $0000-$0FFF (4K Common-RAM-Lo). */
+    common_code (rw) : ORIGIN = __c128_common_code_origin, LENGTH = __c128_common_code_length
 }
 
 INCLUDE commodore.ld
@@ -54,11 +68,15 @@ SECTIONS {
     .c128bank1.data : { *(.c128bank1.data) } >bank1 AT>ram
     .c128bank1.bss (NOLOAD) : { *(.c128bank1.bss) } >bank1
     .c128commoncode : { *(.c128commoncode.*) } >common_code AT>ram
+    /* Holds the original contents of the area .c128commoncode occupies at
+     * runtime, saved at startup and restored at exit (bank1-load.c). */
+    .c128commoncode_save (NOLOAD) : { . += SIZEOF(.c128commoncode); } >ram
 }
 
 __c128commoncode_vma_start = ADDR(.c128commoncode);
 __c128commoncode_lma_start = LOADADDR(.c128commoncode);
 __c128commoncode_size = SIZEOF(.c128commoncode);
+__c128commoncode_save_start = ADDR(.c128commoncode_save);
 
 __c128bank1_text_vma_start = ADDR(.c128bank1.text);
 __c128bank1_text_lma_start = LOADADDR(.c128bank1.text);
