@@ -60,7 +60,9 @@ void __c128bank1_restore_common_code(void) {
 
 static char __attribute__((section(".zp.bss"))) __c128bank1_scratch[C128BANK1_CHUNK];
 
-static void c128bank1_copy_region(char *vma, const char *lma, unsigned short size) {
+// Copy size bytes from bank-0-visible src into bank-1 RAM at vma, staged
+// through the Common-RAM scratch buffer. Also used by the M0.2 module loader.
+void __c128bank1_copy_region(char *vma, const char *lma, unsigned short size) {
   while (size) {
     unsigned char chunk = size > C128BANK1_CHUNK ? C128BANK1_CHUNK : (unsigned char)size;
     memcpy(__c128bank1_scratch, lma, chunk);
@@ -94,9 +96,9 @@ static void c128bank1_zero_region(char *vma, unsigned short size) {
 // .init.200's ordinary .data/.bss init, after .init.011's Common-RAM
 // bump).
 void __c128bank1_load(void) {
-  c128bank1_copy_region(__c128bank1_text_vma_start, __c128bank1_text_lma_start,
+  __c128bank1_copy_region(__c128bank1_text_vma_start, __c128bank1_text_lma_start,
                          (unsigned short)&__c128bank1_text_size);
-  c128bank1_copy_region(__c128bank1_data_vma_start, __c128bank1_data_lma_start,
+  __c128bank1_copy_region(__c128bank1_data_vma_start, __c128bank1_data_lma_start,
                          (unsigned short)&__c128bank1_data_size);
   c128bank1_zero_region(__c128bank1_bss_vma_start,
                          (unsigned short)&__c128bank1_bss_size);

@@ -13,6 +13,9 @@
 ; Interrupts are disabled for the duration of the switched-away call
 ; (design requirement, not just this implementation's choice - a bank
 ; switch changes what an interrupt handler would see at $4000-$BFFF too).
+; The caller's I flag is saved and restored (PHP/PLP, not SEI/CLI) so the
+; routine is also safe to call with interrupts already disabled, e.g. from
+; inside call_gate.
 ;
 ; method's argument register (__rc2/__rc3 for a single pointer argument,
 ; confirmed against actual compiler output, not assumed) is forwarded to
@@ -44,6 +47,7 @@ c128_bank1_call:
 	stx __rc18
 	ldx __rc3
 	stx __rc19
+	php
 	lda MMU_CR
 	pha
 	sei
@@ -52,7 +56,7 @@ c128_bank1_call:
 	jsr .Lc128_bank1_call_indir
 	pla
 	sta MMU_CR
-	cli
+	plp
 	rts
 .Lc128_bank1_call_indir:
 	jmp (__rc18)
@@ -148,6 +152,7 @@ __rcrsave:
 .globl __c128bank1_copy_chunk
 __c128bank1_copy_chunk:
 	tax
+	php
 	lda MMU_CR
 	pha
 	sei
@@ -162,5 +167,5 @@ __c128bank1_copy_chunk:
 	bne .Lc128bank1_copy_loop
 	pla
 	sta MMU_CR
-	cli
+	plp
 	rts
