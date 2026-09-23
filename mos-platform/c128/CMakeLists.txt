@@ -32,6 +32,7 @@ add_platform_library(c128-c
   devnum.s
   kernal.S
   bank1.s
+  bank1-load.c
 )
 target_include_directories(c128-c BEFORE PUBLIC .)
 target_include_directories(c128-c BEFORE PUBLIC ../c64)

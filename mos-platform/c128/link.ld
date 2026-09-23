@@ -10,11 +10,43 @@ __basic_zp_end = 0x0090;
 
 MEMORY {
     ram (rw) : ORIGIN = 0x1C01, LENGTH = 0xA3FF
+    /* RAM bank 1, for MOS_C128_BANK1_CODE/_DATA-placed content (bank1.h).
+     * Starts right after the 4K Common-RAM-Lo window bank1.s configures
+     * (bank1's own $0000-$0FFF is unavailable - it's force-mirrored to
+     * bank 0's physical RAM regardless of CR, same as bank 0's own view
+     * of that range), and ends where KERNAL ROM/I-O take over at $C000
+     * under MMU_CFG_RAM1_KERNAL (c128.inc) - unlike bank 0's `ram`
+     * region, no BASIC-compatibility start offset is needed here, since
+     * this region is never BASIC-LOADed directly; it's populated by
+     * bank1-load.c's own copy mechanism at program startup instead. */
+    bank1 (rw) : ORIGIN = 0x1000, LENGTH = 0xB000
 }
 
 INCLUDE commodore.ld
 
 INPUT(init-mmu.o)
+
+/* MOS_C128_BANK1_CODE/_DATA content (bank1.h): placed in bank1 (VMA) but
+ * loaded into ram alongside everything else (LMA), since ordinary PRG
+ * loading only ever populates one bank - bank1-load.c copies it into
+ * bank1 at startup. See work/M0_C128_BANKING_PLAN.md section 4.1 task 4
+ * in llvm-mos-mechanik for the full reasoning. */
+SECTIONS {
+    .c128bank1.text : { *(.c128bank1.text) } >bank1 AT>ram
+    .c128bank1.data : { *(.c128bank1.data) } >bank1 AT>ram
+    .c128bank1.bss (NOLOAD) : { *(.c128bank1.bss) } >bank1
+}
+
+__c128bank1_text_vma_start = ADDR(.c128bank1.text);
+__c128bank1_text_lma_start = LOADADDR(.c128bank1.text);
+__c128bank1_text_size = SIZEOF(.c128bank1.text);
+
+__c128bank1_data_vma_start = ADDR(.c128bank1.data);
+__c128bank1_data_lma_start = LOADADDR(.c128bank1.data);
+__c128bank1_data_size = SIZEOF(.c128bank1.data);
+
+__c128bank1_bss_vma_start = ADDR(.c128bank1.bss);
+__c128bank1_bss_size = SIZEOF(.c128bank1.bss);
 
 __stack = 0xC000;
 
