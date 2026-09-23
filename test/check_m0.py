@@ -72,10 +72,10 @@ def main():
                 "b_h2_back": "00", "r_b_reload": "0A", "cr_b_reload": "4E", "leak_err": "00",
                 "r_act": "00", "r_ams": "00"}
     ok &= m0_2("heap_test", heap_syms, heap_exp, "M0.2.4 heap objects / caller-bank locking")
-    edge_syms = ["big:2", "r_bank", "ev_a", "ev_b", "ev_n", "f_res", "b_again", "act", "ams_end"]
-    edge_exp = {"big": "01 01", "r_bank": "4E", "ev_a": "00", "ev_b": "01", "ev_n": "02",
+    edge_syms = ["big:2", "ev_delta_big", "cd_alive", "refused_delta", "r_bank", "ev_a", "ev_b", "ev_n", "f_res", "b_again", "act", "ams_end"]
+    edge_exp = {"big": "01 01", "ev_delta_big": "00", "cd_alive": "01", "refused_delta": "01", "r_bank": "4E", "ev_a": "00", "ev_b": "01", "ev_n": "02",
                 "f_res": "0A", "b_again": "0A", "act": "00", "ams_end": "00"}
-    ok &= m0_2("edge_test", edge_syms, edge_exp, "M0.2 pinning blocks load; CLOCK prefers cold")
+    ok &= m0_2("edge_test", edge_syms, edge_exp, "M0.2 pinning blocks load (pre-check: no side effects); CLOCK prefers cold")
     spill_syms = ["f0_full", "sp_a", "ev_a", "b0", "b1", "b2", "b3", "b4", "data_ok1", "n_big",
                   "oom_malloc", "free0_end", "free1_end", "oom_lock_null", "data_ok2", "freed_ok"]
     spill_exp = {"f0_full": "00", "sp_a": "03", "ev_a": "00", "b0": "01", "b1": "01", "b2": "01",
@@ -83,6 +83,14 @@ def main():
                  "free0_end": "02", "free1_end": "02", "oom_lock_null": "01", "data_ok2": "01",
                  "freed_ok": "01"}
     ok &= m0_2("spill_test", spill_syms, spill_exp, "M0.2 objects spill to other bank; true OOM -> NULL, no loss")
+    defrag_syms = ["qb1", "qb2", "addr_before:2", "addr_pinned:2", "addr_after:2", "moves_pinned",
+                   "moves_b", "delta_ok", "qa1", "qa2", "qa3", "qa4", "e_moved", "e_same", "e_data",
+                   "frag_ok", "big_ok", "big_b", "a_data"]
+    defrag_exp = {"qb1": "01", "qb2": "02", "addr_before": "60 10", "addr_pinned": "60 10",
+                  "addr_after": "00 10", "moves_pinned": "00", "moves_b": "01", "delta_ok": "01",
+                  "qa1": "02", "qa2": "0D", "qa3": "0F", "qa4": "0F", "e_moved": "01", "e_same": "01",
+                  "e_data": "01", "frag_ok": "01", "big_ok": "01", "big_b": "01", "a_data": "01"}
+    ok &= m0_2("defrag_test", defrag_syms, defrag_exp, "M0.2 defragmentation (module relocation, pinning, auto on alloc)")
     # M0.1 tests use zero-page/screen output; check via the screen text.
     for t, want in (("m0_bank1_test", "initial=153 after=154"),
                     ("m0_bank1_test2", "counter=200 cr=14")):

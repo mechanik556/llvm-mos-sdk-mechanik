@@ -11,10 +11,13 @@ mos_handle_t mos_cacheable_malloc(uint16_t size);
 uint8_t pool_free_units(uint8_t bank);
 void mod_init(void);
 void mod_clear_refs(void);
-unsigned char m_double(unsigned char), m_cb(unsigned char), m_f_add7(unsigned char), m_r_call_sm(void);
+unsigned char m_double(unsigned char), m_cb(unsigned char), m_f_add7(unsigned char), m_r_call_sm(void), m_calld(unsigned char);
 uint16_t m_r_try_big(void);
+extern volatile uint16_t mt_addr[10];
+extern volatile uint8_t place_refused;
 extern volatile uint8_t mt_cr[10], mt_active[10], evict_log[16], evict_n, ams_top;
 
+static volatile uint8_t ev_before_big, ev_delta_big, cd_alive, refused_before, refused_delta;
 static volatile uint16_t big;                     /* 0x0101: refused (A=1, X=1) */
 static volatile uint8_t r_alive, r_bank;          /* 1 (unpatched R), 0x4E */
 static volatile uint8_t nfill, free0, free1;      /* 29, 0, 0 */
@@ -28,7 +31,13 @@ int main(void) {
   m_cb(1);                             /* A -> bank 0 (newer): bank 0 has 4 of 5 units used */
   mos_cacheable_malloc(20);            /* bank 0 full */
 
+  m_calld(4);                          /* C, D -> bank 1 (bank 0 is full) */
+  ev_before_big = evict_n;
+  refused_before = place_refused;
   big = m_r_try_big();                 /* R loads into bank 1, calls H (30 units) */
+  ev_delta_big = evict_n - ev_before_big;   /* 0: refused up front, nothing evicted */
+  cd_alive = (mt_addr[2] != 0) && (mt_addr[3] != 0);   /* 1: C and D untouched */
+  refused_delta = place_refused - refused_before;      /* 1 */
   r_alive = m_r_call_sm();
   r_bank = mt_cr[5];
 

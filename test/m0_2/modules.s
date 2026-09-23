@@ -152,6 +152,9 @@ r_try_evict:
 	lda #5
 	CALL 6, 0
 	rts
+r_try_defrag:                    ; ask the host to defragment while R is active (pinned)
+	CALL 6, 9
+	rts
 r_try_big:                       ; call H (30 units) while R is pinned
 	lda #21
 	CALL 8, h_double - modH_start
@@ -292,7 +295,10 @@ mt_reloc: .word noreloc, noreloc, noreloc, noreloc, noreloc
 .globl m_double, m_cb, m_chain, m_sum, m_calld, t_carry, t_cin, t_iflag, t_inest, t_fail
 .globl m_r_entry, m_r_viaptr, m_r_lohi, m_r_call_sm, m_r_sm_to_b, m_r_try_evict
 .globl m_f_add7, m_h_double, m_g_incr, m_g_sum, host_tab
-.globl m_add1, m_rec, m_calle, m_r_try_big
+.globl m_add1, m_rec, m_calle, m_r_try_big, m_r_try_defrag
+m_r_try_defrag:
+	CALL 5, r_try_defrag - modR_start
+	rts
 m_add1:
 	CALL 0, fa_add1 - modA_start
 	rts
@@ -322,6 +328,7 @@ host_tab:
 	jmp host_try_evict
 	jmp host_lock
 	jmp host_unlock
+	jmp host_defrag
 m_g_incr:                        ; C: (handle) -> 0 ok, 1 = lock refused
 	CALL 9, g_incr - modG_start
 	bcs 1f

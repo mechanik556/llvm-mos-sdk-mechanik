@@ -14,7 +14,7 @@ mkdir -p "$WORK"; cd "$WORK"
 NAME=$(basename "$SRC" .c)
 "$MOS_CLANG" --config "$SDK_INSTALL/bin/mos-c128.cfg" -o "$NAME.prg" \
   -Wl,-Map="$NAME.map" $EXTRA_FLAGS "$SRC"
-EXIT_HEX=$(grep -E "\(\.text\.exit\)" "$NAME.map" | head -1 | awk '{print $1}')
+EXIT_HEX=$(grep -E "\(\.after_main\)" "$NAME.map" | head -1 | awk '{print $1}')
 EXIT_DEC=$((16#$EXIT_HEX))
 echo "exit at \$$EXIT_HEX ($EXIT_DEC)"
 grep -E "^ +[0-9a-f]+ +[0-9a-f]+ +[0-9a-f]+ +1 +.*c128commoncode$|__c128commoncode_(vma_start|size)" "$NAME.map" || true

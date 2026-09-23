@@ -1,6 +1,7 @@
 #!/bin/bash
 # Usage: run_vice_syms.sh <prog.prg> <prog.map> "sym[:len] sym[:len] ..."
-# Runs the PRG under VICE x128 to the start of exit(), dumps $0000-$BFFF
+# Runs the PRG under VICE x128 to __after_main (runs only after main returns;
+# exit() itself is a 6-byte function the linker can fold with an early one), dumps $0000-$BFFF
 # (bank 0 view) and prints the named symbols' bytes (addresses from the
 # link map). Env: VICE_X128, WORK.
 set -e
@@ -8,7 +9,7 @@ PRG="$(realpath "$1")"; MAP="$(realpath "$2")"; SYMS="$3"
 VICE_X128="${VICE_X128:-/c/C64/GTK3VICE-3.10-win64/bin/x128.exe}"
 WORK="${WORK:-/tmp/mos_test}"; mkdir -p "$WORK"; cd "$WORK"
 NAME=$(basename "$PRG" .prg)
-EXIT_HEX=$(grep -E "\(\.text\.exit\)" "$MAP" | head -1 | awk '{print $1}')
+EXIT_HEX=$(grep -E "\(\.after_main\)" "$MAP" | head -1 | awk '{print $1}')
 W=$(cygpath -m "$WORK")
 printf 'save "%s/%s.mem" 0 0000 bfff\nquit\n' "$W" "$NAME" > "$NAME.mon"
 rm -f "$NAME.mem"; taskkill //F //IM x128.exe >/dev/null 2>&1 || true

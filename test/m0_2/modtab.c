@@ -154,6 +154,7 @@ void mod_clear_refs(void) { uint8_t id; for (id = 0; id < NMODS; id++) mt_ref[id
 typedef uint16_t mos_handle_t;
 static struct { uint16_t addr, size, stamp; uint8_t bank, lock, used; } ho[NOBJ];
 static uint16_t ostamp;             // last-lock stamp source (LRU for objects)
+uint8_t defrag_moves, place_refused; // defragmentation moves; requests refused up front by the feasibility check (tests)
 uint8_t obj_spills;                 // objects moved to the other bank to make room (tests)
 
 // Copy between arbitrary banks in 16-byte chunks via a local buffer.
@@ -200,28 +201,140 @@ static uint8_t spill_one(uint8_t bank) {
   }
 }
 
+static void mark(uint8_t bank, uint8_t start, uint8_t units) {
+  uint8_t k;
+  for (k = start; k < start + units; k++) bitmap[bank][k >> 3] |= 1 << (k & 7);
+}
+
+uint8_t pool_free_units(uint8_t bank) {
+  uint8_t u, n = 0;
+  for (u = 0; u < pool_units[bank]; u++) if (!bit_used(bank, u)) n++;
+  return n;
+}
+// Longest run of free units (test helper).
+uint8_t pool_max_run(uint8_t bank) {
+  uint8_t u, run = 0, best = 0;
+  for (u = 0; u < pool_units[bank]; u++) {
+    if (bit_used(bank, u)) run = 0; else if (++run > best) best = run;
+  }
+  return best;
+}
+
+static uint8_t unit_of(uint8_t bank, uint16_t addr) { return (uint8_t)((addr - pool_base(bank)) / UNIT); }
+
+// FEASIBILITY: the longest run of units in `bank` NOT held by a pinned item
+// (an active module or a locked object). Pinned items can never move or be
+// evicted, so no amount of spilling/eviction/defragmentation can produce a
+// bigger contiguous run than this.
+static uint8_t max_gap(uint8_t bank) {
+  uint8_t pin[(POOL1_UNITS + 7) / 8] = {0}, id, u, run = 0, best = 0, s, n;
+  for (id = 0; id < NMODS; id++) {
+    if (!mt_img[id] || !(mt_addr[id] >> 8) || !mt_active[id] || (mt_cr[id] == 0x4E) != bank) continue;
+    s = unit_of(bank, mt_addr[id]);
+    for (n = 0; n < units_of(mt_size[id]); n++) pin[(s + n) >> 3] |= 1 << ((s + n) & 7);
+  }
+  for (id = 0; id < NOBJ; id++) {
+    if (!ho[id].used || !ho[id].lock || ho[id].bank != bank) continue;
+    s = unit_of(bank, ho[id].addr);
+    for (n = 0; n < units_of(ho[id].size); n++) pin[(s + n) >> 3] |= 1 << ((s + n) & 7);
+  }
+  for (u = 0; u < pool_units[bank]; u++) {
+    if (pin[u >> 3] & (1 << (u & 7))) run = 0; else if (++run > best) best = run;
+  }
+  return best;
+}
+
+// DEFRAGMENTATION of one bank's pool: slide every unpinned resident (module
+// or object) down to the end of the previous item, so free space collects
+// into as few runs as the pinned items allow. Modules are relocated by the
+// move delta (added to their current values, so self-modified operands stay
+// correct); objects are plain copies (their handles do not change). Returns
+// the number of items moved.
+static uint8_t defrag(uint8_t bank) {
+  uint8_t cursor = 0, moved = 0;
+  for (;;) {
+    uint8_t id, bs = 0xFF, bkind = 0, bidx = 0, n, pinned;
+    uint16_t oldaddr, newaddr;
+    for (id = 0; id < NMODS; id++) {
+      uint8_t s;
+      if (!mt_img[id] || !(mt_addr[id] >> 8) || (mt_cr[id] == 0x4E) != bank) continue;
+      s = unit_of(bank, mt_addr[id]);
+      if (s >= cursor && (bs == 0xFF || s < bs)) { bs = s; bkind = 1; bidx = id; }
+    }
+    for (id = 0; id < NOBJ; id++) {
+      uint8_t s;
+      if (!ho[id].used || ho[id].bank != bank) continue;
+      s = unit_of(bank, ho[id].addr);
+      if (s >= cursor && (bs == 0xFF || s < bs)) { bs = s; bkind = 2; bidx = id; }
+    }
+    if (bs == 0xFF) break;
+    if (bkind == 1) { n = units_of(mt_size[bidx]); pinned = mt_active[bidx] != 0; }
+    else            { n = units_of(ho[bidx].size); pinned = ho[bidx].lock != 0; }
+    if (pinned || bs == cursor) { cursor = bs + n; continue; }
+    newaddr = pool_base(bank) + (uint16_t)cursor * UNIT;
+    if (bkind == 1) {
+      oldaddr = mt_addr[bidx];
+      xcopy(bank, newaddr, bank, oldaddr, mt_size[bidx]);     /* moving down: forward copy is overlap-safe */
+      apply_relocs(bank, newaddr, mt_reloc[bidx], (uint16_t)(newaddr - oldaddr));
+      mt_addr[bidx] = newaddr;
+    } else {
+      oldaddr = ho[bidx].addr;
+      xcopy(bank, newaddr, bank, oldaddr, ho[bidx].size);
+      ho[bidx].addr = newaddr;
+    }
+    release(bank, bs, n);
+    mark(bank, cursor, n);
+    cursor += n;
+    moved++;
+    defrag_moves++;
+  }
+  return moved;
+}
+
+// alloc, and if the bank has enough free units in total but no contiguous run,
+// defragment it first.
+static uint8_t alloc_defrag(uint8_t bank, uint8_t units) {
+  uint8_t idx = alloc(bank, units);
+  if (idx != 0xFF) return idx;
+  if (pool_free_units(bank) >= units && defrag(bank)) idx = alloc(bank, units);
+  return idx;
+}
+
 // Find room for `units` units, preferring `first` bank (design 11.6 pt 4):
-// pass 0 tries free space in the preferred bank, then the other; only if
-// NEITHER has room does pass 1 evict the oldest unpinned module from the
-// preferred bank (then the other) until it fits. Returns the unit index
-// (or 0xFF) and sets *bank_out. `only` = 0xFF means either bank, else that
-// bank only.
+//  0. free space in the preferred bank, then the other;
+//  1. defragment a bank that has enough free units in total;
+//  2. only then make room: spill an unlocked object to the other bank
+//     (lossless) or evict the oldest cold module, defragmenting whenever the
+//     freed total is enough, until it fits.
+// A FEASIBILITY check runs first: a request larger than the longest run not
+// held by pinned items in every allowed bank is refused up front, with no
+// spills, evictions or moves. Returns the unit index (or 0xFF) and sets
+// *bank_out. `only` = 0xFF means either bank, else that bank only.
 static uint8_t place(uint8_t first, uint8_t only, uint8_t units, uint8_t *bank_out) {
-  uint8_t pass, k, bank, idx = 0xFF;
-  for (pass = 0; pass < 2 && idx == 0xFF; pass++) {
-    for (k = 0; k < 2 && idx == 0xFF; k++) {
-      bank = k ? !first : first;
-      if (only != 0xFF && bank != only) continue;
-      if (units > pool_units[bank]) continue;
-      for (;;) {
-        uint8_t victim;
-        idx = alloc(bank, units);
-        if (idx != 0xFF || !pass) break;   /* pass 0: free space only */
-        if (spill_one(bank)) continue;     /* lossless: move an object across */
-        victim = find_victim(bank);
-        if (victim == 0xFF) break;
-        mod_evict(victim);
-      }
+  uint8_t k, bank = 0, idx = 0xFF, ok[2];
+  for (k = 0; k < 2; k++)
+    ok[k] = (only == 0xFF || only == k) && units <= pool_units[k] && max_gap(k) >= units;
+  *bank_out = 0;
+  if (!ok[0] && !ok[1]) { place_refused++; return 0xFF; }
+  for (k = 0; k < 2 && idx == 0xFF; k++) {                 /* pass 0 */
+    bank = k ? !first : first;
+    if (ok[bank]) idx = alloc(bank, units);
+  }
+  for (k = 0; k < 2 && idx == 0xFF; k++) {                 /* pass 1: defragment */
+    bank = k ? !first : first;
+    if (ok[bank]) idx = alloc_defrag(bank, units);
+  }
+  for (k = 0; k < 2 && idx == 0xFF; k++) {                 /* pass 2: spill / evict */
+    bank = k ? !first : first;
+    if (!ok[bank]) continue;
+    for (;;) {
+      uint8_t victim;
+      idx = alloc_defrag(bank, units);
+      if (idx != 0xFF) break;
+      if (spill_one(bank)) continue;     /* lossless: move an object across */
+      victim = find_victim(bank);
+      if (victim == 0xFF) break;
+      mod_evict(victim);
     }
   }
   *bank_out = bank;
@@ -308,11 +421,6 @@ void mos_handle_unlock(mos_handle_t handle) {
 // Test helpers.
 uint8_t obj_bank(mos_handle_t handle) { return ho[handle - 1].bank; }
 uint8_t obj_lock(mos_handle_t handle) { return ho[handle - 1].lock; }
-uint8_t pool_free_units(uint8_t bank) {
-  uint8_t u, n = 0;
-  for (u = 0; u < pool_units[bank]; u++) if (!bit_used(bank, u)) n++;
-  return n;
-}
 
 // Host (static) module entry points, reached through the gate from module
 // code in either bank (offsets 0, 3, 6 of the jump table host_tab in
@@ -322,6 +430,11 @@ uint8_t host_try_evict(uint8_t id) { return mod_evict(id); }
 // __rc2/__rc3 but integers in A/X, and module code reads A/X.
 uint16_t host_lock(mos_handle_t handle) { return (uint16_t)lock_in(handle, (gt_cr & 0x40) ? 1 : 0); }
 void host_unlock(mos_handle_t handle) { mos_handle_unlock(handle); }
+
+// Defragment both banks' pools; returns the number of items moved. Active
+// modules and locked objects are never moved.
+uint8_t mos_defrag(void) { return defrag(0) + defrag(1); }
+uint8_t host_defrag(void) { return mos_defrag(); }
 
 extern char host_tab[];
 void mod_init(void) {
