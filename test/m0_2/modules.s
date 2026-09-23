@@ -159,6 +159,72 @@ h_double:
 
 	PAD 30
 
+; Module G (id 9, 4 units): runs in whatever bank it lands in and uses the host
+; module (6) to lock/unlock cacheable heap objects (handle in A, X=0).
+; Host jump table offsets: 0 = evict, 3 = lock (-> ptr in A/X, 0 if refused),
+; 6 = unlock. Both functions return with carry set on failure, clear on
+; success, and use only zero-page scratch __rc2-__rc4 between gate calls.
+;   g_incr(h): ++first byte of the object; A=0
+;   g_sum(h):  A = low byte of the sum of the object's first 70 bytes
+	.section .rodata.modG,"a",@progbits
+modG_start:
+g_incr:
+	pha
+	ldx #0
+	CALL 6, 3
+	sta __rc2
+	stx __rc3
+	ora __rc3
+	beq g_fail
+	ldy #0
+	lda (__rc2),y
+	clc
+	adc #1
+	sta (__rc2),y
+	pla
+	ldx #0
+	CALL 6, 6
+	lda #0
+	clc
+	rts
+g_sum:
+	pha
+	ldx #0
+	CALL 6, 3
+	sta __rc2
+	stx __rc3
+	ora __rc3
+	beq g_fail
+	ldy #0
+	lda #0
+	sta __rc4
+g_sum_loop:
+	lda __rc4
+	clc
+	adc (__rc2),y
+	sta __rc4
+	iny
+	cpy #70
+	bne g_sum_loop
+	lda __rc4
+	pha
+	tsx
+	lda $0102,x
+	ldx #0
+	CALL 6, 6
+	pla
+	tax
+	pla
+	txa
+	clc
+	rts
+g_fail:
+	pla
+	sec
+	rts
+
+	PAD 4
+
 ; Relocation tables: {1, off16}=FULL16, {2, lo_off16, hi_off16}=paired LOW8/
 ; HIGH8, {0}=end. Offsets are relative to the module's image start.
 	.section .rodata.reloc,"a",@progbits
@@ -196,16 +262,36 @@ r_info:
 	.section .rodata.mt,"a",@progbits
 .globl mt_img, mt_size, mt_reloc
 mt_img:   .word modA_start, modB_start, modC_start, modD_start, modA_start
-          .word modR_start, 0, modF_start, modH_start
-mt_size:  .word 32, 96, 64, 32, 4000, 96, 0, 64, 960
+          .word modR_start, 0, modF_start, modH_start, modG_start
+mt_size:  .word 32, 96, 64, 32, 4000, 96, 0, 64, 960, 128
 mt_reloc: .word noreloc, noreloc, noreloc, noreloc, noreloc
-          .word modR_reloc, noreloc, noreloc, noreloc
+          .word modR_reloc, noreloc, noreloc, noreloc, noreloc
 
 ; C-callable stubs for the bank-0 test driver (m_* take A / A,X, return A).
 	.section .text.stubs,"ax",@progbits
 .globl m_double, m_cb, m_chain, m_sum, m_calld, t_carry, t_cin, t_iflag, t_inest, t_fail
 .globl m_r_entry, m_r_viaptr, m_r_lohi, m_r_call_sm, m_r_sm_to_b, m_r_try_evict
-.globl m_f_add7, m_h_double
+.globl m_f_add7, m_h_double, m_g_incr, m_g_sum, host_tab
+; Static host module (id 6) entry table: three 3-byte jumps into C (modtab.c).
+host_tab:
+	jmp host_try_evict
+	jmp host_lock
+	jmp host_unlock
+m_g_incr:                        ; C: (handle) -> 0 ok, 1 = lock refused
+	CALL 9, g_incr - modG_start
+	bcs 1f
+	lda #0
+	rts
+1:	lda #1
+	rts
+m_g_sum:                         ; C: (handle) -> uint16: lo = sum, hi = 1 if refused
+	CALL 9, g_sum - modG_start
+	bcs 1f
+	ldx #0
+	rts
+1:	ldx #1
+	lda #0
+	rts
 m_r_entry:
 	CALL 5, r_entry - modR_start
 	rts

@@ -13,7 +13,7 @@
 // (design 4.1b - correct even for self-modified operands) and writes the
 // image back. Paired lo/hi fixups are combined into one 16-bit operation.
 
-#define NMODS 9
+#define NMODS 10
 #define UNIT 32           // allocation granularity, bytes
 #define POOL0_UNITS 5     // deliberately small so modules spill into bank 1
 #define POOL1_UNITS 32
@@ -134,17 +134,18 @@ static uint8_t find_victim(uint8_t bank) {
   return best;
 }
 
-// Returns 0 on success, 1 = out of memory. Placement (design 11.6 pt 4):
-// prefer the bank the triggering caller runs in, else the other - and only if
-// NEITHER bank has room, evict the oldest unpinned module from the preferred
-// bank (then the other) until the module fits.
-uint8_t mod_load(uint8_t id) {
-  uint16_t size = mt_size[id];
-  uint8_t units = units_of(size);
-  uint8_t first = (gt_cr & 0x40) ? 1 : 0, pass, k, bank = 0, idx = 0xFF;
+// Find room for `units` units, preferring `first` bank (design 11.6 pt 4):
+// pass 0 tries free space in the preferred bank, then the other; only if
+// NEITHER has room does pass 1 evict the oldest unpinned module from the
+// preferred bank (then the other) until it fits. Returns the unit index
+// (or 0xFF) and sets *bank_out. `only` = 0xFF means either bank, else that
+// bank only.
+static uint8_t place(uint8_t first, uint8_t only, uint8_t units, uint8_t *bank_out) {
+  uint8_t pass, k, bank, idx = 0xFF;
   for (pass = 0; pass < 2 && idx == 0xFF; pass++) {
     for (k = 0; k < 2 && idx == 0xFF; k++) {
       bank = k ? !first : first;
+      if (only != 0xFF && bank != only) continue;
       if (units > pool_units[bank]) continue;
       for (;;) {
         uint8_t victim;
@@ -156,6 +157,15 @@ uint8_t mod_load(uint8_t id) {
       }
     }
   }
+  *bank_out = bank;
+  return idx;
+}
+
+// Returns 0 on success, 1 = out of memory.
+uint8_t mod_load(uint8_t id) {
+  uint16_t size = mt_size[id];
+  uint8_t units = units_of(size), bank = 0;
+  uint8_t idx = place((gt_cr & 0x40) ? 1 : 0, 0xFF, units, &bank);
   if (idx == 0xFF) return 1;
   {
     uint16_t dest = pool_base(bank) + (uint16_t)idx * UNIT;
@@ -170,11 +180,100 @@ uint8_t mod_load(uint8_t id) {
   return 0;
 }
 
-// Host (static) module: base-program code exposed through the gate like any
-// module, so module code can call back into ordinary bank-0 functions.
-uint8_t host_try_evict(uint8_t id) { return mod_evict(id); }
+// ---- Cacheable heap objects (design 4.1d) -------------------------------
+// Handles are small integers (index+1; 0 = null). Objects share the module
+// pools. DESIGN CORRECTION vs 11.6 pts 2-3: mos_handle_lock cannot switch
+// $FF00 and hand back a bank-1 pointer - the caller's own code (ordinary
+// bank-0 RAM, non-common) would vanish. Instead lock makes the object
+// resident in the CALLER'S OWN bank, migrating it through the Common-RAM
+// staging helpers if it is in the other one; no bank switch is held across
+// caller code. A lock held by one bank's code pins the object there, so the
+// other bank's lock attempt fails (NULL) - the remaining "cross-bank
+// conflict" case.
 
+#define NOBJ 8
+typedef uint16_t mos_handle_t;
+static struct { uint16_t addr, size; uint8_t bank, lock, used; } ho[NOBJ];
+
+// Copy between arbitrary banks in 16-byte chunks via a local buffer.
+static void xcopy(uint8_t dbank, uint16_t dst, uint8_t sbank, uint16_t src, uint16_t size) {
+  uint8_t buf[16];
+  while (size) {
+    uint8_t n = size > 16 ? 16 : (uint8_t)size;
+    if (sbank) __c128bank1_read((char *)buf, (const char *)src, n);
+    else memcpy(buf, (const void *)src, n);
+    if (dbank) __c128bank1_copy_region((char *)dst, (const char *)buf, n);
+    else memcpy((void *)dst, buf, n);
+    dst += n; src += n; size -= n;
+  }
+}
+
+mos_handle_t mos_cacheable_malloc(uint16_t size) {
+  uint8_t h, bank = 0, idx;
+  for (h = 0; h < NOBJ && ho[h].used; h++) {}
+  if (h == NOBJ || !size) return 0;
+  idx = place(0, 0xFF, units_of(size), &bank);
+  if (idx == 0xFF) return 0;
+  ho[h].addr = pool_base(bank) + (uint16_t)idx * UNIT;
+  ho[h].size = size; ho[h].bank = bank; ho[h].lock = 0; ho[h].used = 1;
+  return h + 1;
+}
+
+// 0 ok, 1 = locked, 2 = invalid handle.
+uint8_t mos_cacheable_free(mos_handle_t handle) {
+  if (!handle || handle > NOBJ || !ho[handle - 1].used) return 2;
+  if (ho[handle - 1].lock) return 1;
+  release(ho[handle - 1].bank, (uint8_t)((ho[handle - 1].addr - pool_base(ho[handle - 1].bank)) / UNIT),
+          units_of(ho[handle - 1].size));
+  ho[handle - 1].used = 0;
+  return 0;
+}
+
+// Lock for code executing in `caller_bank`; returns a pointer valid in that
+// bank until the matching unlock, or 0 (invalid handle, locked from the other
+// bank, or no room to migrate).
+static void *lock_in(mos_handle_t handle, uint8_t caller_bank) {
+  uint8_t units, idx, nb = 0;
+  uint16_t dst;
+  if (!handle || handle > NOBJ || !ho[handle - 1].used) return 0;
+  if (ho[handle - 1].bank != caller_bank) {
+    if (ho[handle - 1].lock) return 0;
+    units = units_of(ho[handle - 1].size);
+    idx = place(caller_bank, caller_bank, units, &nb);
+    if (idx == 0xFF) return 0;
+    dst = pool_base(caller_bank) + (uint16_t)idx * UNIT;
+    xcopy(caller_bank, dst, ho[handle - 1].bank, ho[handle - 1].addr, ho[handle - 1].size);
+    release(ho[handle - 1].bank, (uint8_t)((ho[handle - 1].addr - pool_base(ho[handle - 1].bank)) / UNIT), units);
+    ho[handle - 1].addr = dst;
+    ho[handle - 1].bank = caller_bank;
+  }
+  ho[handle - 1].lock++;
+  return (void *)ho[handle - 1].addr;
+}
+void *mos_handle_lock(mos_handle_t handle) { return lock_in(handle, 0); }   /* bank-0 callers */
+void mos_handle_unlock(mos_handle_t handle) {
+  if (handle && handle <= NOBJ && ho[handle - 1].lock) ho[handle - 1].lock--;
+}
+// Test helpers.
+uint8_t obj_bank(mos_handle_t handle) { return ho[handle - 1].bank; }
+uint8_t obj_lock(mos_handle_t handle) { return ho[handle - 1].lock; }
+uint8_t pool_free_units(uint8_t bank) {
+  uint8_t u, n = 0;
+  for (u = 0; u < pool_units[bank]; u++) if (!bit_used(bank, u)) n++;
+  return n;
+}
+
+// Host (static) module entry points, reached through the gate from module
+// code in either bank (offsets 0, 3, 6 of the jump table host_tab in
+// modules.s). The caller's bank comes from the gate's saved $FF00.
+uint8_t host_try_evict(uint8_t id) { return mod_evict(id); }
+// Returns the pointer as a 16-bit INTEGER: llvm-mos returns pointers in
+// __rc2/__rc3 but integers in A/X, and module code reads A/X.
+uint16_t host_lock(mos_handle_t handle) { return (uint16_t)lock_in(handle, (gt_cr & 0x40) ? 1 : 0); }
+void host_unlock(mos_handle_t handle) { mos_handle_unlock(handle); }
+
+extern char host_tab[];
 void mod_init(void) {
-  mt_addr[HOST] = (uint16_t)host_try_evict;
+  mt_addr[HOST] = (uint16_t)host_tab;
   mt_cr[HOST] = 0x0E;
 }
