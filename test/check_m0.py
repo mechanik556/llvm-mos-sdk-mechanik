@@ -76,6 +76,13 @@ def main():
     edge_exp = {"big": "01 01", "r_bank": "4E", "ev_a": "00", "ev_b": "01", "ev_n": "02",
                 "f_res": "0A", "b_again": "0A", "act": "00", "ams_end": "00"}
     ok &= m0_2("edge_test", edge_syms, edge_exp, "M0.2 pinning blocks load; CLOCK prefers cold")
+    spill_syms = ["f0_full", "sp_a", "ev_a", "b0", "b1", "b2", "b3", "b4", "data_ok1", "n_big",
+                  "oom_malloc", "free0_end", "free1_end", "oom_lock_null", "data_ok2", "freed_ok"]
+    spill_exp = {"f0_full": "00", "sp_a": "03", "ev_a": "00", "b0": "01", "b1": "01", "b2": "01",
+                 "b3": "00", "b4": "00", "data_ok1": "01", "n_big": "0B", "oom_malloc": "01",
+                 "free0_end": "02", "free1_end": "02", "oom_lock_null": "01", "data_ok2": "01",
+                 "freed_ok": "01"}
+    ok &= m0_2("spill_test", spill_syms, spill_exp, "M0.2 objects spill to other bank; true OOM -> NULL, no loss")
     # M0.1 tests use zero-page/screen output; check via the screen text.
     for t, want in (("m0_bank1_test", "initial=153 after=154"),
                     ("m0_bank1_test2", "counter=200 cr=14")):

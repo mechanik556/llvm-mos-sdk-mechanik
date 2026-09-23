@@ -150,6 +150,56 @@ static uint8_t find_victim(uint8_t bank) {
 }
 void mod_clear_refs(void) { uint8_t id; for (id = 0; id < NMODS; id++) mt_ref[id] = 0; }
 
+#define NOBJ 32
+typedef uint16_t mos_handle_t;
+static struct { uint16_t addr, size, stamp; uint8_t bank, lock, used; } ho[NOBJ];
+static uint16_t ostamp;             // last-lock stamp source (LRU for objects)
+uint8_t obj_spills;                 // objects moved to the other bank to make room (tests)
+
+// Copy between arbitrary banks in 16-byte chunks via a local buffer.
+static void xcopy(uint8_t dbank, uint16_t dst, uint8_t sbank, uint16_t src, uint16_t size) {
+  uint8_t buf[16];
+  while (size) {
+    uint8_t n = size > 16 ? 16 : (uint8_t)size;
+    if (sbank) __c128bank1_read((char *)buf, (const char *)src, n);
+    else memcpy(buf, (const void *)src, n);
+    if (dbank) __c128bank1_copy_region((char *)dst, (const char *)buf, n);
+    else memcpy((void *)dst, buf, n);
+    dst += n; src += n; size -= n;
+  }
+}
+
+
+// Make room in `bank` without discarding anything: move the least recently
+// locked unlocked object that fits into the OTHER bank's current free space
+// over there. Returns 1 if an object was moved. (No REU/disk tier exists yet,
+// so the other bank is the only place an object can go; if it has no room
+// this returns 0 and the caller falls through to evicting modules, and
+// finally to an out-of-memory error.)
+static uint8_t spill_one(uint8_t bank) {
+  uint32_t tried = 0;
+  for (;;) {
+    uint8_t h, best = 0xFF, units, idx;
+    uint16_t dst;
+    for (h = 0; h < NOBJ; h++) {
+      if (!ho[h].used || ho[h].lock || ho[h].bank != bank || (tried & ((uint32_t)1 << h))) continue;
+      if (best == 0xFF || ho[h].stamp < ho[best].stamp) best = h;
+    }
+    if (best == 0xFF) return 0;
+    tried |= (uint32_t)1 << best;
+    units = units_of(ho[best].size);
+    idx = alloc(!bank, units);
+    if (idx == 0xFF) continue;                   /* does not fit over there: try the next */
+    dst = pool_base(!bank) + (uint16_t)idx * UNIT;
+    xcopy(!bank, dst, bank, ho[best].addr, ho[best].size);
+    release(bank, (uint8_t)((ho[best].addr - pool_base(bank)) / UNIT), units);
+    ho[best].addr = dst;
+    ho[best].bank = !bank;
+    obj_spills++;
+    return 1;
+  }
+}
+
 // Find room for `units` units, preferring `first` bank (design 11.6 pt 4):
 // pass 0 tries free space in the preferred bank, then the other; only if
 // NEITHER has room does pass 1 evict the oldest unpinned module from the
@@ -167,6 +217,7 @@ static uint8_t place(uint8_t first, uint8_t only, uint8_t units, uint8_t *bank_o
         uint8_t victim;
         idx = alloc(bank, units);
         if (idx != 0xFF || !pass) break;   /* pass 0: free space only */
+        if (spill_one(bank)) continue;     /* lossless: move an object across */
         victim = find_victim(bank);
         if (victim == 0xFF) break;
         mod_evict(victim);
@@ -207,23 +258,6 @@ uint8_t mod_load(uint8_t id) {
 // other bank's lock attempt fails (NULL) - the remaining "cross-bank
 // conflict" case.
 
-#define NOBJ 32
-typedef uint16_t mos_handle_t;
-static struct { uint16_t addr, size; uint8_t bank, lock, used; } ho[NOBJ];
-
-// Copy between arbitrary banks in 16-byte chunks via a local buffer.
-static void xcopy(uint8_t dbank, uint16_t dst, uint8_t sbank, uint16_t src, uint16_t size) {
-  uint8_t buf[16];
-  while (size) {
-    uint8_t n = size > 16 ? 16 : (uint8_t)size;
-    if (sbank) __c128bank1_read((char *)buf, (const char *)src, n);
-    else memcpy(buf, (const void *)src, n);
-    if (dbank) __c128bank1_copy_region((char *)dst, (const char *)buf, n);
-    else memcpy((void *)dst, buf, n);
-    dst += n; src += n; size -= n;
-  }
-}
-
 mos_handle_t mos_cacheable_malloc(uint16_t size) {
   uint8_t h, bank = 0, idx;
   for (h = 0; h < NOBJ && ho[h].used; h++) {}
@@ -231,7 +265,7 @@ mos_handle_t mos_cacheable_malloc(uint16_t size) {
   idx = place(0, 0xFF, units_of(size), &bank);
   if (idx == 0xFF) return 0;
   ho[h].addr = pool_base(bank) + (uint16_t)idx * UNIT;
-  ho[h].size = size; ho[h].bank = bank; ho[h].lock = 0; ho[h].used = 1;
+  ho[h].size = size; ho[h].bank = bank; ho[h].lock = 0; ho[h].used = 1; ho[h].stamp = ++ostamp;
   return h + 1;
 }
 
@@ -264,6 +298,7 @@ static void *lock_in(mos_handle_t handle, uint8_t caller_bank) {
     ho[handle - 1].bank = caller_bank;
   }
   ho[handle - 1].lock++;
+  ho[handle - 1].stamp = ++ostamp;
   return (void *)ho[handle - 1].addr;
 }
 void *mos_handle_lock(mos_handle_t handle) { return lock_in(handle, 0); }   /* bank-0 callers */
