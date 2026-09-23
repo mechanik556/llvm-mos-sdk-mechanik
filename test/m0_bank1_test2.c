@@ -10,6 +10,7 @@
  *   j2/j3      same, AFTER the bank calls - differing proves CLI really
  *              re-enabled the IRQ that advances the clock
  *   s1/s2      sentinels set before the loop, expect 0xA5/0x5A unchanged
+ *   sp0/sp1    hardware stack pointer before/after the 200-call loop, expect equal
  * printf output ("counter=200 cr=14") should also appear in screen RAM.
  */
 
@@ -20,6 +21,13 @@ static volatile unsigned char ZP r_counter;
 static volatile unsigned char ZP r_cr;
 static volatile unsigned char ZP j0, j1, j2, j3;
 static volatile unsigned char ZP s1, s2;
+static volatile unsigned char ZP sp0, sp1;
+
+static inline unsigned char get_sp(void) {
+  unsigned char v;
+  __asm__ volatile("tsx" : "=x"(v));
+  return v;
+}
 
 MOS_C128_BANK1_CODE static void inc_counter(void) { counter++; }
 MOS_C128_BANK1_CODE static void read_counter(void) { r_counter = counter; }
@@ -42,9 +50,11 @@ int main(void) {
   c128_bank1_call(inc_counter);
   r_cr = *(volatile unsigned char *)0xFF00;
 
+  sp0 = get_sp();
   for (i = 0; i < 199; i++)
     c128_bank1_call(inc_counter);
 
+  sp1 = get_sp();
   j2 = *(volatile unsigned char *)0xA2;
   delay();
   j3 = *(volatile unsigned char *)0xA2;

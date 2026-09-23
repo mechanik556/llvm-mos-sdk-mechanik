@@ -11,10 +11,52 @@
 // so calling into bank-1-resident code requires switching the MMU's
 // Configuration Register first and switching it back afterward.
 //
-// Data placed in bank 1 (MOS_C128_BANK1_DATA) can't be dereferenced
-// directly from bank-0-resident code any more than the code can be called
-// directly - write an accessor function (placed with MOS_C128_BANK1_CODE,
-// invoked via c128_bank1_call) instead of taking a raw pointer to it.
+// Usage pattern (see test/m0_bank1_test*.c):
+//
+//   MOS_C128_BANK1_DATA static volatile unsigned char table[64];
+//   static volatile unsigned char __attribute__((section(".zp.bss"))) result;
+//
+//   MOS_C128_BANK1_CODE static void get_entry(void) { result = table[3]; }
+//
+//   c128_bank1_call(get_entry);   // from ordinary code; then read `result`
+//
+// Rules - all follow from "while bank 1 is mapped, the CPU sees bank 1's
+// RAM for everything except Common RAM ($0000-$0FFF, incl. zero page/stack)":
+//
+// * Accessors, not pointers. Bank-1 data can't be dereferenced from
+//   bank-0 code (the same address reads bank 0's RAM). Write an accessor
+//   function placed with MOS_C128_BANK1_CODE and invoke it via
+//   c128_bank1_call; never pass or return raw pointers to bank-1 data.
+//
+// * Pass values through Common RAM. c128_bank1_call takes no arguments for
+//   the callee and returns nothing (registers are not preserved across the
+//   switch-back). Exchange data via zero-page variables
+//   (__attribute__((section(".zp.bss")))) - the only ordinary variables
+//   both banks see. The zero-page pool is small (~100 bytes, shared with
+//   the compiler's own use).
+//
+// * Bank-1 code must be self-contained. Ordinary bank-0 code (libc such
+//   as memcpy/printf, KERNAL wrappers, any function not marked
+//   MOS_C128_BANK1_CODE, and compiler-generated runtime calls such as
+//   multiply/divide helpers) is NOT reachable while bank 1 is mapped;
+//   calling it executes whatever bank 1 holds at that address. Keep bank-1
+//   functions to simple leaf code. Also avoid anything that needs the C
+//   software stack (large locals, spills, stack-passed arguments): its
+//   memory is in bank 0 at a non-common address, so bank-1 code would use
+//   bank 1's own memory at that address instead. Not enforced by the
+//   toolchain.
+//
+// * Interrupts are disabled for the duration of each call; keep calls
+//   short.
+//
+// * Declare bank-1 globals volatile if you need to be sure they are really
+//   loaded/stored: LTO may otherwise constant-fold a never-written global.
+//
+// * Not usable together with RS-232: the Common-RAM trampoline code lives
+//   in the RS-232 buffer area ($0C00-$0DFF, see link.ld).
+//
+// * Initialized and zero-initialized bank-1 data are populated at program
+//   startup (bank1-load.c). Bank-1 memory is bank1's $1000-$BFFF.
 
 #ifndef _C128_BANK1_H
 #define _C128_BANK1_H

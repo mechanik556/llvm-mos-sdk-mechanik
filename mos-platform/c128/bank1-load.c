@@ -33,7 +33,7 @@ void __c128bank1_copy_chunk(char *dest, const char *src, unsigned char count);
 // Populates .c128commoncode (c128_bank1_call/__c128bank1_copy_chunk's own
 // code, bank1.s) at startup - it has the exact same "ordinary PRG loading
 // doesn't populate it" problem bank-1 content does, since its VMA
-// ($0800-$0FFF) isn't contiguous with the rest of the loaded image
+// ($0C00-$0DFF) isn't contiguous with the rest of the loaded image
 // either. Unlike bank-1 content, this copy never crosses a bank
 // boundary (both ends are ordinary bank-0 memory), so a plain memcpy is
 // correct and sufficient - no chunking or __c128bank1_copy_chunk needed.

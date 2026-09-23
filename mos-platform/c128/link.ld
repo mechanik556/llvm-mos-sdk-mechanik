@@ -25,18 +25,19 @@ MEMORY {
      * live here, not in ordinary `ram` - once CR selects bank 1, the next
      * instruction fetch has to land on the same physical bytes regardless
      * of which bank is mapped, which is only guaranteed within the 4K
-     * Common-RAM-Lo window bank1.s configures ($0000-$0FFF). Found via
-     * VICE testing (work/M0_C128_BANKING_PLAN.md section 4.1 task 4/6 in
-     * llvm-mos-mechanik), not assumed - the first implementation forgot
-     * this and hung mid-switch, fetching garbage from unpopulated bank-1
-     * memory. $0800-$0FFF avoids $0000-$03FF (BASIC/KERNAL's own zero
-     * page/workspace, confirmably not free even in bank 1 - see
-     * research/c128_mmu_reference.md's FRE(1)=$0400-$FEFF finding) and
-     * the conventional $0400-$07E7 screen memory range, at the cost of
-     * competing with the low end of bank1's own budget for those 2K -
-     * acceptable given how little of it this needs (under 100 bytes
-     * today). */
-    common_code (rw) : ORIGIN = 0x0800, LENGTH = 0x0800
+     * Common-RAM-Lo window bank1.s configures ($0000-$0FFF). The first
+     * implementation forgot this and hung mid-switch (found via VICE).
+     *
+     * $0C00-$0DFF is the RS-232 input/output buffer pair - per Compute's
+     * Mapping the Commodore 128 (ch. on free memory, "probably the best
+     * area for short ML routines"), free unless the program uses RS-232,
+     * and unlike the cassette buffer ($0B00) it survives a reset. Other
+     * candidates in the window were rejected: $0000-$03FF KERNAL/BASIC
+     * workspace, $0400-$07E7 text screen, $0800-$09FF BASIC runtime stack,
+     * $0A00-$0AFF system vectors/editor variables, $0B00 disk-boot/tape
+     * buffer, $0E00-$0FFF default sprite definitions. Programs that open
+     * RS-232 must not use bank-1 placement (or relocate this region). */
+    common_code (rw) : ORIGIN = 0x0C00, LENGTH = 0x0200
 }
 
 INCLUDE commodore.ld

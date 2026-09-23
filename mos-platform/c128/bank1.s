@@ -88,7 +88,7 @@ __rcrsave:
 ; VMA, below) right after the Common-RAM bump above and before anything
 ; else - in particular before .init.201's __c128bank1_load, which is the
 ; first thing that actually calls __c128bank1_copy_chunk. This copy
-; never crosses a bank boundary itself (both $0800-$0FFF and this
+; never crosses a bank boundary itself (both $0C00-$0DFF and this
 ; content's LMA in `ram` are ordinary bank-0 memory, simultaneously
 ; reachable without any switch), so a plain call to the C library's own
 ; memcpy is fine here, unlike the bank-1 case.
