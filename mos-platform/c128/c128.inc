@@ -214,6 +214,7 @@ CIA2_CRB         = $DD0F
 MMU_CR           = $FF00
 MMU_CFG_CC65     = %00001110    ; Bank 0 with kernal ROM
 MMU_CFG_RAM0_KERNAL = %00001110    ; Bank 0 with kernal ROM
+MMU_CFG_RAM1_KERNAL = %01001110    ; Bank 1 with kernal ROM
 MMU_CFG_RAM0     = %00111111    ; Bank 0 full RAM
 MMU_CFG_RAM1     = %01111111    ; Bank 1 full RAM
 MMU_CFG_RAM2     = %10111111    ; Bank 2 full RAM
