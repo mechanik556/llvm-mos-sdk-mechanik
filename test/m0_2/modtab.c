@@ -22,7 +22,8 @@
 uint16_t mt_addr[NMODS];
 uint8_t mt_cr[NMODS];
 volatile uint8_t mt_active[NMODS];
-static uint16_t mt_stamp[NMODS];   // load order (FIFO-ish stand-in for LRU)
+volatile uint8_t mt_ref[NMODS];    // CLOCK reference bit, set by the gate on every call
+static uint16_t mt_stamp[NMODS];   // load order (tie-break among equally cold modules)
 static uint16_t stamp_clock;
 extern const uint16_t mt_img[NMODS];    // canonical image address (bank 0)
 extern const uint16_t mt_size[NMODS];   // image size in bytes
@@ -38,6 +39,7 @@ static uint8_t bitmap[2][(POOL1_UNITS + 7) / 8];
 static const uint8_t pool_units[2] = {POOL0_UNITS, POOL1_UNITS};
 
 uint8_t mod_loads, mod_evictions;   // counters (for tests)
+uint8_t evict_log[16], evict_n;     // ids of evicted modules, in order (for tests)
 
 void __c128bank1_copy_region(char *vma, const char *lma, unsigned short size);
 void __c128bank1_read(char *dest, const char *src, unsigned short size);
@@ -120,19 +122,33 @@ uint8_t mod_evict(uint8_t id) {
   mt_addr[id] = 0;
   mt_cr[id] = 0;
   mod_evictions++;
+  if (evict_n < 16) evict_log[evict_n++] = id;
   return 0;
 }
 
-// Oldest resident, non-static, inactive module in `bank`, or 0xFF.
-static uint8_t find_victim(uint8_t bank) {
+// Oldest resident, non-static, inactive module in `bank` (optionally only
+// those whose reference bit is clear), or 0xFF.
+static uint8_t oldest(uint8_t bank, uint8_t cold_only) {
   uint8_t id, best = 0xFF;
   for (id = 0; id < NMODS; id++) {
     if (!mt_img[id] || !(mt_addr[id] >> 8) || mt_active[id]) continue;
     if ((mt_cr[id] == 0x4E) != bank) continue;
+    if (cold_only && mt_ref[id]) continue;
     if (best == 0xFF || mt_stamp[id] < mt_stamp[best]) best = id;
   }
   return best;
 }
+
+// CLOCK-style victim choice: the oldest candidate not used since the last
+// sweep; if every candidate was used, the sweep clears all reference bits
+// (second chance) and the oldest is taken. 0xFF if there is no candidate.
+static uint8_t find_victim(uint8_t bank) {
+  uint8_t v = oldest(bank, 1), id;
+  if (v != 0xFF) return v;
+  for (id = 0; id < NMODS; id++) mt_ref[id] = 0;
+  return oldest(bank, 0);
+}
+void mod_clear_refs(void) { uint8_t id; for (id = 0; id < NMODS; id++) mt_ref[id] = 0; }
 
 // Find room for `units` units, preferring `first` bank (design 11.6 pt 4):
 // pass 0 tries free space in the preferred bank, then the other; only if
@@ -191,7 +207,7 @@ uint8_t mod_load(uint8_t id) {
 // other bank's lock attempt fails (NULL) - the remaining "cross-bank
 // conflict" case.
 
-#define NOBJ 8
+#define NOBJ 32
 typedef uint16_t mos_handle_t;
 static struct { uint16_t addr, size; uint8_t bank, lock, used; } ho[NOBJ];
 

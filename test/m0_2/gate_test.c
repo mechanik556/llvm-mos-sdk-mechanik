@@ -2,6 +2,9 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#ifdef VIDEO80
+#include <c128.h>
+#endif
 
 /* M0.2 test driver (stages 2.1-2.3). Results are ordinary globals, read from
  * a VICE memory dump via the link map. Expected values are in the comments
@@ -16,6 +19,7 @@ unsigned char t_carry(void), t_cin(void), t_iflag(void), t_inest(void), t_fail(v
 unsigned char m_r_entry(unsigned char), m_r_viaptr(unsigned char), m_r_lohi(unsigned char);
 unsigned char m_r_call_sm(void), m_r_sm_to_b(void), m_r_try_evict(void);
 unsigned char m_f_add7(unsigned char), m_h_double(unsigned char);
+uint16_t m_rec(unsigned char), m_calle(void);
 uint8_t mod_evict(uint8_t);
 void mod_init(void);
 
@@ -40,6 +44,9 @@ static volatile uint8_t ndiff, diff_ok;               /* image write-back: 1-2 d
 static volatile uint8_t q_h, ev_after_h, res_c, res_d, res_f, res_r, res_h; /* 42, >=4, then 0 0 0 0, 1 */
 static volatile uint8_t q_thrash, q_sm3, ev_end;      /* 8, 2 */
 static volatile uint8_t ndiff2, diff_ok2;
+/* hardening */
+static volatile uint16_t rec10, rec20, calle;  /* 000A, 0102, 0101 */
+static volatile uint8_t act_h, ams_h, sp_h0, sp_h1;  /* 2, 0, 0, equal */
 /* common */
 static volatile uint8_t r_cr, r_act, r_ams, err, sp0, sp1, j2, j3, loads1;
 
@@ -74,6 +81,9 @@ static void compare_r(volatile uint8_t *ndiff_out, volatile uint8_t *ok_out) {
 int main(void) {
   uint8_t i;
   mod_init();
+#ifdef VIDEO80
+  videomode(VIDEOMODE_80COL);   /* run everything with the 80-column display active */
+#endif
   memcpy(orig_r, (const void *)mt_img[5], 96);
 
   r1 = m_double(5);        /* 10   loads B into bank 0 (caller's bank) */
@@ -122,6 +132,16 @@ int main(void) {
   q_thrash = m_calld(4);   /* 8: reloads C, evicts H to make room for D */
   q_sm3 = m_r_call_sm();   /* 2: patch survived a further eviction cycle */
   ev_end = mod_evictions;
+
+  /* hardening: nesting depth, failure mid-nest (see edge_test.c for pinning/policy) */
+  sp_h0 = get_sp();
+  rec10 = m_rec(10);       /* 0x000A: 11 nested gate calls succeed */
+  rec20 = m_rec(20);       /* 0x0102: the 17th nested call is refused (A=2, X=1) and unwinds */
+  calle = m_calle();       /* 0x0101: out-of-memory inside a nested call */
+  act_h = 0;
+  for (i = 0; i < NMODS; i++) act_h += mt_active[i];
+  ams_h = ams_top;
+  sp_h1 = get_sp();
 
   r_cr = *(volatile uint8_t *)0xFF00;
   r_act = 0;

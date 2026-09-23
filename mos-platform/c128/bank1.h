@@ -40,11 +40,13 @@
 //   MOS_C128_BANK1_CODE, and compiler-generated runtime calls such as
 //   multiply/divide helpers) is NOT reachable while bank 1 is mapped;
 //   calling it executes whatever bank 1 holds at that address. Keep bank-1
-//   functions to simple leaf code. Also avoid anything that needs the C
-//   software stack (large locals, spills, stack-passed arguments): its
-//   memory is in bank 0 at a non-common address, so bank-1 code would use
-//   bank 1's own memory at that address instead. Not enforced by the
-//   toolchain.
+//   functions to simple leaf code. Also avoid the software/static stack
+//   (locals, spills, stack-passed arguments) and ordinary globals: their
+//   memory is in bank 0 at a non-common address, so bank-1 code silently
+//   reads and writes bank 1's own memory at that same address instead
+//   (confirmed by test/m0_bank1_test4.c). Locals work as private scratch,
+//   but that address may fall inside bank-1 content and corrupt it. Not
+//   enforced by the toolchain; use zero page or MOS_C128_BANK1_DATA.
 //
 // * Interrupts are disabled for the duration of each call; keep calls
 //   short.

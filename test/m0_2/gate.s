@@ -109,6 +109,8 @@ call_gate:
 	asl
 	tay
 .Lres:
+	lda #1
+	sta mt_ref,x         ; CLOCK reference bit: used since the eviction sweep
 	lda ams_top
 	cmp #AMS_MAX
 	bcc .Lroom

@@ -63,6 +63,22 @@ fb_cin:                          ; return the carry-in as 0/1
 	lda #0
 	rol
 	rts
+fb_rec:                          ; recurse A levels through the gate; returns A
+	cmp #0                       ; (carry clear), or the gate's failure (carry
+	beq 2f                       ; set, A = code) propagated unchanged
+	sec
+	sbc #1
+	CALL 1, fb_rec - modB_start
+	bcs 1f
+	clc
+	adc #1
+1:	rts
+2:	lda #0
+	clc
+	rts
+fb_calle:                        ; call module 4 (cannot load) from inside B
+	CALL 4, 0
+	rts
 
 	PAD 3
 
@@ -135,6 +151,10 @@ f10:	sta r_call_sm+2
 r_try_evict:
 	lda #5
 	CALL 6, 0
+	rts
+r_try_big:                       ; call H (30 units) while R is pinned
+	lda #21
+	CALL 8, h_double - modH_start
 	rts
 
 	PAD 3
@@ -272,6 +292,31 @@ mt_reloc: .word noreloc, noreloc, noreloc, noreloc, noreloc
 .globl m_double, m_cb, m_chain, m_sum, m_calld, t_carry, t_cin, t_iflag, t_inest, t_fail
 .globl m_r_entry, m_r_viaptr, m_r_lohi, m_r_call_sm, m_r_sm_to_b, m_r_try_evict
 .globl m_f_add7, m_h_double, m_g_incr, m_g_sum, host_tab
+.globl m_add1, m_rec, m_calle, m_r_try_big
+m_add1:
+	CALL 0, fa_add1 - modA_start
+	rts
+m_rec:                           ; C: (depth) -> uint16: lo = A, hi = 1 if refused
+	CALL 1, fb_rec - modB_start
+	bcs 1f
+	ldx #0
+	rts
+1:	ldx #1
+	rts
+m_calle:
+	CALL 1, fb_calle - modB_start
+	bcs 1f
+	ldx #0
+	rts
+1:	ldx #1
+	rts
+m_r_try_big:
+	CALL 5, r_try_big - modR_start
+	bcs 1f
+	ldx #0
+	rts
+1:	ldx #1
+	rts
 ; Static host module (id 6) entry table: three 3-byte jumps into C (modtab.c).
 host_tab:
 	jmp host_try_evict
