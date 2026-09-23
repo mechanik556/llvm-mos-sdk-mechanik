@@ -73,6 +73,21 @@ void __c128bank1_copy_region(char *vma, const char *lma, unsigned short size) {
   }
 }
 
+// Inverse of __c128bank1_copy_region: copy size bytes from bank-1 RAM at src
+// into bank-0-visible dest, staged through the Common-RAM scratch buffer.
+// (__c128bank1_copy_chunk copies with bank 1 mapped, so it serves both ways:
+// its destination is Common RAM here instead of its source.)
+void __c128bank1_read(char *dest, const char *src, unsigned short size) {
+  while (size) {
+    unsigned char chunk = size > C128BANK1_CHUNK ? C128BANK1_CHUNK : (unsigned char)size;
+    __c128bank1_copy_chunk(__c128bank1_scratch, src, chunk);
+    memcpy(dest, __c128bank1_scratch, chunk);
+    dest += chunk;
+    src += chunk;
+    size -= chunk;
+  }
+}
+
 static void c128bank1_zero_region(char *vma, unsigned short size) {
   memset(__c128bank1_scratch, 0, C128BANK1_CHUNK);
   while (size) {

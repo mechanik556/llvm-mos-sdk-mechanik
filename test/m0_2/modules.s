@@ -86,16 +86,150 @@ fd_x2:
 
 	PAD 1
 
-; Image address / size tables (bank-0 ROM-like data). Module 4's size is
-; deliberately larger than both pools; its image is never copied.
+; Module R (id 5): exercises relocation. Every absolute reference to its own
+; labels is listed in modR_reloc. Fixup labels f1..f10 sit on the instruction
+; whose operand (at label+1) is relocated.
+;   r_entry(A)    = r_tbl[A] + 10        (abs,X data ref + abs JSR)
+;   r_viaptr(A)   = A + 10               (jmp through an in-module data word)
+;   r_lohi(A)     = A + 10               (pointer built from paired lo/hi imms)
+;   r_call_sm()   = 1, or 2 after r_sm_to_b() patches its jmp operand at
+;                   runtime with the CURRENT address of r_target_b
+;   r_try_evict() = host_try_evict(5): must be refused (module is active)
+	.section .rodata.modR,"a",@progbits
+modR_start:
+r_entry:
+	tax
+f1:	lda r_tbl,x
+f2:	jsr r_helper
+	rts
+r_helper:
+	clc
+	adc #10
+	rts
+r_tbl:	.byte 1, 2, 3, 4
+r_ptr:	.word r_helper
+r_viaptr:
+f3:	jmp (r_ptr)
+r_lohi:
+	sta __rc4
+f4:	lda #mos16lo(r_helper)
+	sta __rc2
+f5:	lda #mos16hi(r_helper)
+	sta __rc3
+	lda __rc4
+	jmp (__rc2)
+r_call_sm:
+f6:	jmp r_target_a
+r_target_a:
+	lda #1
+	rts
+r_target_b:
+	lda #2
+	rts
+r_sm_to_b:
+f7:	lda #mos16lo(r_target_b)
+f8:	sta r_call_sm+1
+f9:	lda #mos16hi(r_target_b)
+f10:	sta r_call_sm+2
+	rts
+r_try_evict:
+	lda #5
+	CALL 6, 0
+	rts
+
+	PAD 3
+
+; Module F (id 7, 2 units): f_add7(A) = A+7.
+	.section .rodata.modF,"a",@progbits
+modF_start:
+f_add7:
+	clc
+	adc #7
+	rts
+
+	PAD 2
+
+; Module H (id 8, 30 units): fills nearly all of bank 1's pool, so loading it
+; forces automatic eviction of the modules resident there.
+	.section .rodata.modH,"a",@progbits
+modH_start:
+h_double:
+	asl
+	rts
+
+	PAD 30
+
+; Relocation tables: {1, off16}=FULL16, {2, lo_off16, hi_off16}=paired LOW8/
+; HIGH8, {0}=end. Offsets are relative to the module's image start.
+	.section .rodata.reloc,"a",@progbits
+noreloc:
+	.byte 0
+modR_reloc:
+	.byte 1
+	.word f1+1 - modR_start
+	.byte 1
+	.word f2+1 - modR_start
+	.byte 1
+	.word r_ptr - modR_start
+	.byte 1
+	.word f3+1 - modR_start
+	.byte 2
+	.word f4+1 - modR_start, f5+1 - modR_start
+	.byte 1
+	.word f6+1 - modR_start
+	.byte 2
+	.word f7+1 - modR_start, f9+1 - modR_start
+	.byte 1
+	.word f8+1 - modR_start
+	.byte 1
+	.word f10+1 - modR_start
+	.byte 0
+; Offsets the test driver checks: [0] = jmp operand of r_call_sm, [1] =
+; r_target_a, [2] = r_target_b.
+.globl r_info
+r_info:
+	.word f6+1 - modR_start, r_target_a - modR_start, r_target_b - modR_start
+
+; Image address / size / relocation-table tables (bank-0 read-only data).
+; Module 4's size is deliberately larger than both pools; its image is never
+; copied. Module 6 is the static host (no image).
 	.section .rodata.mt,"a",@progbits
-.globl mt_img, mt_size
-mt_img:  .word modA_start, modB_start, modC_start, modD_start, modA_start
-mt_size: .word 32, 96, 64, 32, 4000
+.globl mt_img, mt_size, mt_reloc
+mt_img:   .word modA_start, modB_start, modC_start, modD_start, modA_start
+          .word modR_start, 0, modF_start, modH_start
+mt_size:  .word 32, 96, 64, 32, 4000, 96, 0, 64, 960
+mt_reloc: .word noreloc, noreloc, noreloc, noreloc, noreloc
+          .word modR_reloc, noreloc, noreloc, noreloc
 
 ; C-callable stubs for the bank-0 test driver (m_* take A / A,X, return A).
 	.section .text.stubs,"ax",@progbits
 .globl m_double, m_cb, m_chain, m_sum, m_calld, t_carry, t_cin, t_iflag, t_inest, t_fail
+.globl m_r_entry, m_r_viaptr, m_r_lohi, m_r_call_sm, m_r_sm_to_b, m_r_try_evict
+.globl m_f_add7, m_h_double
+m_r_entry:
+	CALL 5, r_entry - modR_start
+	rts
+m_r_viaptr:
+	CALL 5, r_viaptr - modR_start
+	rts
+m_r_lohi:
+	CALL 5, r_lohi - modR_start
+	rts
+m_r_call_sm:
+	CALL 5, r_call_sm - modR_start
+	rts
+m_r_sm_to_b:
+	CALL 5, r_sm_to_b - modR_start
+	rts
+m_r_try_evict:
+	CALL 5, r_try_evict - modR_start
+	rts
+m_f_add7:
+	CALL 7, f_add7 - modF_start
+	rts
+m_h_double:
+	CALL 8, h_double - modH_start
+	rts
 m_double:
 	CALL 1, fb_double - modB_start
 	rts
