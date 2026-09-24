@@ -100,7 +100,8 @@ __rcrsave:
 	jsr __c128bank1_load_common_code
 
 ; Put the original contents of that area back at exit, before the RCR
-; restore (.fini.989) and MMU restore (.fini.990). Nothing after this
+; restore (.fini.989). (BASIC's memory configuration is restored later still,
+; when control actually returns to BASIC: init-mmu.S.) Nothing after this
 ; point may call into bank 1.
 .section .fini.988,"ax",@progbits
 	jsr __c128bank1_restore_common_code
