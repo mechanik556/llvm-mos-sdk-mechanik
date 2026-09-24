@@ -39,6 +39,8 @@ add_custom_target(test)
 add_test_target(apple2)
 add_test_target(c128)
 add_test_target(c64)
+# Both run an emulator (VICE); do not run the two suites at the same time.
+add_dependencies(test-c64 test-c128)
 add_test_target(nes-nrom)
 add_test_target(nes-cnrom)
 add_test_target(nes-gtrom)
