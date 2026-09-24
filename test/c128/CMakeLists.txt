@@ -15,5 +15,11 @@ add_vice_test(bank1-isolation)
 add_vice_test(bank1-large-data)
 add_vice_test(common-code-area)
 
+# Exit path in a program that is large (exit() above $4000): finishes and
+# reports, and hands control back to BASIC.
+add_vice_test(exit-large)
+add_vice_basic_return_test(basic-return)
+add_vice_basic_return_test(basic-return-large)
+
 add_subdirectory(compile)
 add_subdirectory(no-compile)

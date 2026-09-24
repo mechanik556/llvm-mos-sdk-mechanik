@@ -89,6 +89,28 @@ function(add_vice_test name)
   endif()
 endfunction()
 
+# Emulator test for the C128 that checks the program can hand control back to
+# BASIC. It is linked with save-basic.o, which provides the _Exit that returns
+# to BASIC (so NOT with test-lib-emutest, whose _Exit would conflict); the
+# runner passes if BASIC's READY. prompt is on the screen afterwards. VICE only:
+# there is no signature for emutest to look for.
+function(add_vice_basic_return_test name)
+  add_executable(${name}.prg ${name}.c)
+  target_link_options(${name}.prg PRIVATE
+    -Wl,-Map=$<TARGET_FILE:${name}.prg>.map -l:save-basic.o)
+  find_program(VICE_TEST_PYTHON NAMES python python3)
+  if(VICE_X128_COMMAND AND VICE_TEST_PYTHON)
+    add_test(NAME test-${name} COMMAND ${VICE_TEST_PYTHON}
+      ${CMAKE_CURRENT_SOURCE_DIR}/../vice-runner.py
+      --vice ${VICE_X128_COMMAND}
+      --prg $<TARGET_FILE:${name}.prg>
+      --map $<TARGET_FILE:${name}.prg>.map
+      --expect-basic-prompt --timeout 30)
+    set_tests_properties(test-${name} PROPERTIES
+      RESOURCE_LOCK vice TIMEOUT 180)
+  endif()
+endfunction()
+
 function(add_vcs_test name)
   set(source_dir ".")
   if(ARGC GREATER 1)

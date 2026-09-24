@@ -3,6 +3,7 @@
 
 Usage: vice-runner.py --vice <x128> --prg <test.prg> --map <test.map>
                       [--restore-range 0800-09ff] [--timeout 120]
+                      [--expect-basic-prompt]
 
 Result protocol: the same one the emutest runner uses (see test/README.md and
 test-lib-emutest.c). The program exits with a status - returning it from main,
@@ -18,6 +19,12 @@ bytes are dumped just before the program overwrites them and again after the
 exit handlers, and must be identical (the platform promises to restore
 them). The area defaults to the platform default, $0800-$09FF; pass
 --restore-range if the test moves it.
+
+--expect-basic-prompt is a different kind of test: the program is linked with
+save-basic.o (not test-lib-emutest) and returns to BASIC. The runner stops at
+_Exit, lets the machine run on, and passes if BASIC's READY. prompt is on the
+screen afterwards - i.e. the return, including the restore of BASIC's memory
+configuration, worked.
 
 Exit status: 0 pass, 1 fail, 2 no result (crash, hang, timeout, or the
 program never reached _Exit).
@@ -58,6 +65,50 @@ def strip_header(data):
     return data[2:]
 
 
+def screen_text(data):
+    """Decode 40 x 25 screen RAM (screen codes) to text lines."""
+    def dec(b):
+        b &= 0x7F
+        return chr(64 + b) if 1 <= b <= 26 else chr(b) if 32 <= b <= 63 else "."
+    return ["".join(dec(b) for b in data[r * 40:(r + 1) * 40]).rstrip() for r in range(25)]
+
+
+def run_basic_prompt(args, symbols):
+    if "_Exit" not in symbols:
+        print("runner: _Exit not found in the map; is the program linked with "
+              "save-basic.o?", file=sys.stderr)
+        return 2
+    with tempfile.TemporaryDirectory(prefix="vice-test-") as tmp:
+        def p(name):
+            return os.path.join(tmp, name).replace("\\", "/")
+
+        # Stop when the program calls _Exit; BASIC then needs some time to
+        # print its prompt (the count is hexadecimal instructions).
+        mon = ["bank ram", "z 20000", f'save "{p("screen.bin")}" 0 0400 07e7', "quit"]
+        with open(p("script.mon"), "w") as f:
+            f.write("\n".join(mon) + "\n")
+        cmd = [args.vice, "-default", "-initbreak", str(symbols["_Exit"]),
+               "-moncommands", p("script.mon"), "-autostart", os.path.abspath(args.prg)]
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        deadline = time.time() + args.timeout
+        while proc.poll() is None and time.time() < deadline:
+            time.sleep(0.25)
+        timed_out = proc.poll() is None
+        if timed_out:
+            proc.kill()
+        proc.wait()
+        if not os.path.exists(p("screen.bin")):
+            print("FAIL (no result): the program never reached _Exit"
+                  + (" (timeout)" if timed_out else ""))
+            return 2
+        text = screen_text(open(p("screen.bin"), "rb").read()[2:])
+        if any("READY." in line for line in text):
+            print("PASS (returned to BASIC)")
+            return 0
+        print("FAIL: BASIC's READY. prompt is not on the screen after _Exit")
+        return 1
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--vice", required=True, help="path to x128")
@@ -66,9 +117,13 @@ def main():
     ap.add_argument("--restore-range", default="0800-09ff",
                     help="hex start-end of the Common-RAM code area to check")
     ap.add_argument("--timeout", type=float, default=120)
+    ap.add_argument("--expect-basic-prompt", action="store_true",
+                    help="pass if the program returns to BASIC's READY. prompt")
     args = ap.parse_args()
 
     symbols, sections = parse_map(args.map)
+    if args.expect_basic_prompt:
+        return run_basic_prompt(args, symbols)
     if "test_result" not in symbols or ".fini_rts" not in sections:
         print("runner: test_result/.fini_rts not found in the map; does the test "
               "link test-lib-emutest?", file=sys.stderr)
@@ -118,14 +173,8 @@ def main():
         sig = strip_header(open(p("result.bin"), "rb").read())[:8]
         status = SIGNATURES.get(sig)
         if status is None:
-            hint = ""
-            if result_addr >= 0x4000:
-                hint = (f" test_result is at ${result_addr:04X}: above $4000 the exit "
-                        "handlers have already put BASIC's ROM back over RAM, so _Exit "
-                        "may read the wrong signature. Keep the test program small "
-                        "(see test/README.md).")
             print(f"FAIL (no result): test_result holds {sig!r}; the program never "
-                  "reached _Exit (is test-lib-emutest linked?)." + hint)
+                  "reached _Exit (is test-lib-emutest linked?)")
             return 2
         if status != 0:
             print("FAIL: the program exited with a failure status (TestFail)")

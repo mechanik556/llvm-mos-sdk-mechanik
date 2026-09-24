@@ -45,12 +45,10 @@ contain three kinds of test:
   returning from `main` goes through `exit()` to `_Exit(0)`, which overwrites
   the signature with `TestPass`. Return the status instead.
 
-  Keep emulator test programs small. At exit the platform restores BASIC's
-  memory configuration before `_Exit` runs, which maps ROM over `$4000-$BFFF`;
-  a program whose `.rodata` or `test_result` lies above `$4000` (roughly, one
-  that pulls in stdio) makes `_Exit` store ROM bytes instead of the signature,
-  and the runner reports "no result". Use the KERNAL wrappers in `<cbm.h>`
-  rather than `printf` where a test needs screen or disk activity.
+  `add_vice_basic_return_test(<name>)` is the other kind of emulator test: the
+  program is linked with `save-basic.o` (not `test-lib-emutest`), returns to
+  BASIC, and passes if BASIC's `READY.` prompt is on the screen afterwards. It
+  runs under VICE only.
 
 VICE is found through the `VICE_DIR` environment variable (its install
 directory) or `-DVICE_X128_COMMAND=<path to x128>`. Without it the emulator
