@@ -58,6 +58,13 @@ tests are not registered - the programs are still built, and the compile and
 no-compile tests still run. The tests need Python 3 for the runner and open an
 emulator window; CTest runs them one at a time.
 
+Each emulator test can also run headlessly under `emutest` with the libretro
+VICE core (`vice-libretro`, target `x128`), registered as `test-<name>-libretro`
+when `EMUTEST_COMMAND` and the core are found (`LIBRETRO_CORES_DIR` names the
+directory holding `vice_x128_libretro.so`/`.dylib`/`.dll`). That path takes a
+fraction of a second per test, but it can only check the pass/fail signature:
+the Common-RAM restore check needs the monitor breakpoints of `vice-runner.py`.
+
 ```cmake
   add_vice_test(<name>)                 # <name>.c
   add_vice_test(<name> SOURCE other.c   # same source, different link options

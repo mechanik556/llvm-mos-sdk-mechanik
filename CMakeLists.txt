@@ -71,6 +71,12 @@ if(NOT CMAKE_CROSSCOMPILING)
     PATHS /lib64/libretro ENV LIBRETRO_CORES_DIR)
   message(STATUS "Libretro MESEN core: ${LIBRETRO_MESEN_CORE}")
 
+  # find_file, not find_library: find_library does not look for .dll files.
+  find_file(LIBRETRO_VICE_X128_CORE
+    NAMES vice_x128_libretro.so vice_x128_libretro.dylib vice_x128_libretro.dll
+    PATHS /lib64/libretro ENV LIBRETRO_CORES_DIR)
+  message(STATUS "Libretro VICE x128 core: ${LIBRETRO_VICE_X128_CORE}")
+
   # Install toolchain and config file for users of find_package(llvm-mos-sdk).
   # CMake's find_package logic will discover
   # `$PATH/../lib/cmake/llvm-mos-sdk/llvm-mos-sdk-config.cmake` which in turn

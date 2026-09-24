@@ -41,11 +41,14 @@ function(add_no_compile_test target)
   set_property(TEST ${target}-no-compile PROPERTY WILL_FAIL YES)
 endfunction()
 
-# Emulator test for the C128, run under VICE (x128) by vice-runner.py.
-# Results are reported the same way as for emutest: the program returns
-# EXIT_SUCCESS or EXIT_FAILURE (see README.md). The test is only registered with
-# CTest when VICE_X128_COMMAND and Python are available; the program is always
-# built.
+# Emulator test for the C128. Results are reported the same way as for the other
+# emutest platforms: the program returns EXIT_SUCCESS or EXIT_FAILURE (see
+# README.md). The program is always built; up to two CTest tests run it:
+#   test-<name>          under VICE's x128 via vice-runner.py, when
+#                        VICE_X128_COMMAND and Python are available; also checks
+#                        that the Common-RAM code area is restored at exit
+#   test-<name>-libretro under emutest with the libretro VICE x128 core, when
+#                        EMUTEST_COMMAND and LIBRETRO_VICE_X128_CORE are found
 #   name          - target/test name; the source is <name>.c unless SOURCE is given
 #   SOURCE        - source file, to build one source with different link options
 #   LINK_OPTIONS  - extra link options
@@ -77,6 +80,12 @@ function(add_vice_test name)
     # One emulator at a time: instances share VICE's settings and audio.
     set_tests_properties(test-${name} PROPERTIES
       RESOURCE_LOCK vice TIMEOUT 180)
+  endif()
+  if(EMUTEST_COMMAND AND LIBRETRO_VICE_X128_CORE)
+    add_test(NAME test-${name}-libretro COMMAND ${EMUTEST_COMMAND} -T
+      -L ${LIBRETRO_VICE_X128_CORE}
+      -r $<TARGET_FILE:${name}.prg>
+      -t ${CMAKE_CURRENT_SOURCE_DIR}/../emutest.lua)
   endif()
 endfunction()
 
