@@ -13,18 +13,21 @@ spins. This script runs the program until the end of its exit handlers (the
 .fini_rts section), steps the CPU on through _Exit, dumps test_result through
 the VICE monitor, and decodes it.
 
-On the c128, if the program links bank1.o (it has an .init.012 section), the
-"Common-RAM code area" that c128_bank1_call borrows is also checked: its
-bytes are dumped just before the program overwrites them and again after the
-exit handlers, and must be identical (the platform promises to restore
-them). The area defaults to the platform default, $0800-$09FF; pass
---restore-range if the test moves it.
+On the c128, if the program links bank1.o (it has an .init.011 section), two
+things the platform promises to restore are also checked, by reading them just
+before the program changes them and again after the exit handlers: the
+"Common-RAM code area" that c128_bank1_call borrows must hold identical bytes
+(the area defaults to the platform default, $0800-$09FF; pass --restore-range
+if the test moves it), and the RAM Configuration Register ($D506) must have
+its original value.
 
 --expect-basic-prompt is a different kind of test: the program is linked with
 save-basic.o (not test-lib-emutest) and returns to BASIC. The runner stops at
-_Exit, lets the machine run on, and passes if BASIC's READY. prompt is on the
-screen afterwards - i.e. the return, including the restore of BASIC's memory
-configuration, worked.
+_Exit, lets the machine run on, and passes if BASIC has printed a NEW READY.
+prompt (one more READY. line than were on the screen at _Exit - autostart
+leaves its own prompt behind, so the mere presence of one proves nothing) and
+did not fall into the machine-language monitor (BREAK). That shows the return,
+including the restore of BASIC's memory configuration, worked.
 
 Exit status: 0 pass, 1 fail, 2 no result (crash, hang, timeout, or the
 program never reached _Exit).
@@ -40,8 +43,13 @@ import time
 SIGNATURES = {b"TestPass": 0, b"TestFail": 1}
 
 # Instructions to execute after the exit handlers so _Exit can store the
-# signature (about a hundred are needed; the rest are the spin loop).
+# signature (about a hundred are needed; the rest are the spin loop). The
+# monitor's `z` command takes a hexadecimal count, so this is formatted as hex.
 EXIT_STEPS = 3000
+
+# Instructions to let BASIC run after the program returns to it, so that it
+# prints its prompt (again a number for `z`, formatted as hex).
+BASIC_STEPS = 0x20000
 
 
 def parse_map(path):
@@ -82,9 +90,13 @@ def run_basic_prompt(args, symbols):
         def p(name):
             return os.path.join(tmp, name).replace("\\", "/")
 
-        # Stop when the program calls _Exit; BASIC then needs some time to
-        # print its prompt (the count is hexadecimal instructions).
-        mon = ["bank ram", "z 20000", f'save "{p("screen.bin")}" 0 0400 07e7', "quit"]
+        # Stop when the program calls _Exit and look at the screen, then let
+        # BASIC run and look again.
+        mon = ["bank ram",
+               f'save "{p("screen_before.bin")}" 0 0400 07e7',
+               f"z {BASIC_STEPS:x}",
+               f'save "{p("screen_after.bin")}" 0 0400 07e7',
+               "quit"]
         with open(p("script.mon"), "w") as f:
             f.write("\n".join(mon) + "\n")
         cmd = [args.vice, "-default", "-initbreak", str(symbols["_Exit"]),
@@ -97,16 +109,23 @@ def run_basic_prompt(args, symbols):
         if timed_out:
             proc.kill()
         proc.wait()
-        if not os.path.exists(p("screen.bin")):
+        if not os.path.exists(p("screen_after.bin")):
             print("FAIL (no result): the program never reached _Exit"
                   + (" (timeout)" if timed_out else ""))
             return 2
-        text = screen_text(open(p("screen.bin"), "rb").read()[2:])
-        if any("READY." in line for line in text):
-            print("PASS (returned to BASIC)")
-            return 0
-        print("FAIL: BASIC's READY. prompt is not on the screen after _Exit")
-        return 1
+        before = screen_text(strip_header(open(p("screen_before.bin"), "rb").read()))
+        after = screen_text(strip_header(open(p("screen_after.bin"), "rb").read()))
+        if any("BREAK" in line for line in after):
+            print("FAIL: the return to BASIC ended in the machine-language monitor (BREAK)")
+            return 1
+        ready_before = sum("READY." in line for line in before)
+        ready_after = sum("READY." in line for line in after)
+        if ready_after <= ready_before:
+            print(f"FAIL: BASIC printed no new READY. prompt after _Exit "
+                  f"({ready_before} on screen before, {ready_after} after)")
+            return 1
+        print("PASS (returned to BASIC)")
+        return 0
 
 
 def main():
@@ -130,7 +149,7 @@ def main():
         return 2
     result_addr = symbols["test_result"]
     end_addr = sections[".fini_rts"]
-    check_restore = ".init.012" in sections
+    check_restore = ".init.011" in sections
     lo, hi = (int(x, 16) for x in args.restore_range.split("-"))
 
     with tempfile.TemporaryDirectory(prefix="vice-test-") as tmp:
@@ -141,14 +160,17 @@ def main():
         # BASIC's memory configuration, $4000-$BFFF shows BASIC ROM.
         mon = ["bank ram"]
         if check_restore:
-            # First stop: just before .init.012 copies the common code over the area.
+            # First stop: just before .init.011 changes the RCR, and so before
+            # .init.012 copies the common code over the area.
             mon += [f'save "{p("before.bin")}" 0 {lo:04x} {hi:04x}',
+                    "bank io", f'save "{p("rcr_before.bin")}" 0 d506 d506', "bank ram",
                     f"break {end_addr:x}", "x",
-                    f'save "{p("after.bin")}" 0 {lo:04x} {hi:04x}']
-            first_stop = sections[".init.012"]
+                    f'save "{p("after.bin")}" 0 {lo:04x} {hi:04x}',
+                    "bank io", f'save "{p("rcr_after.bin")}" 0 d506 d506', "bank ram"]
+            first_stop = sections[".init.011"]
         else:
             first_stop = end_addr
-        mon += [f"z {EXIT_STEPS}",
+        mon += [f"z {EXIT_STEPS:x}",
                 f'save "{p("result.bin")}" 0 {result_addr:04x} {result_addr + 7:04x}',
                 "quit"]
         with open(p("script.mon"), "w") as f:
@@ -180,6 +202,12 @@ def main():
             print("FAIL: the program exited with a failure status (TestFail)")
             return 1
         if check_restore:
+            rcr_before = strip_header(open(p("rcr_before.bin"), "rb").read())
+            rcr_after = strip_header(open(p("rcr_after.bin"), "rb").read())
+            if rcr_before != rcr_after:
+                print(f"FAIL: RCR ($D506) was ${rcr_before[0]:02X} at startup but "
+                      f"${rcr_after[0]:02X} after exit")
+                return 1
             before = strip_header(open(p("before.bin"), "rb").read())
             after = strip_header(open(p("after.bin"), "rb").read())
             if before != after:
@@ -187,7 +215,7 @@ def main():
                 print(f"FAIL: ${lo:04X}-${hi:04X} was not restored at exit; differs at "
                       + " ".join(diff[:16]))
                 return 1
-        print("PASS" + (f" (${lo:04X}-${hi:04X} restored)" if check_restore else ""))
+        print("PASS" + (f" (${lo:04X}-${hi:04X} and RCR restored)" if check_restore else ""))
         return 0
 
 
