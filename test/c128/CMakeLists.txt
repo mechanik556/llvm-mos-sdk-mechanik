@@ -4,6 +4,9 @@ project(test-c128 LANGUAGES C)
 
 include(../test.cmake)
 
+set(VICE_EMULATOR ${VICE_X128_COMMAND})
+set(VICE_LIBRETRO_CORE ${LIBRETRO_VICE_X128_CORE})
+
 # Common-RAM code area (bank1.h): the default, and moved to the RS-232 buffer
 # area with a link-time override.
 add_vice_test(bank1-call)

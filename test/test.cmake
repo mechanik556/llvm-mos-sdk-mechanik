@@ -41,19 +41,22 @@ function(add_no_compile_test target)
   set_property(TEST ${target}-no-compile PROPERTY WILL_FAIL YES)
 endfunction()
 
-# Emulator test for the C128. Results are reported the same way as for the other
-# emutest platforms: the program returns EXIT_SUCCESS or EXIT_FAILURE (see
-# README.md). The program is always built; up to two CTest tests run it:
-#   test-<name>          under VICE's x128 via vice-runner.py, when
-#                        VICE_X128_COMMAND and Python are available; also checks
-#                        that the Common-RAM code area is restored at exit
-#   test-<name>-libretro under emutest with the libretro VICE x128 core, when
-#                        EMUTEST_COMMAND and LIBRETRO_VICE_X128_CORE are found
+# Emulator test for a VICE-emulated Commodore platform (c64, c128). The calling
+# directory sets VICE_EMULATOR (path to VICE's x64sc/x128) and
+# VICE_LIBRETRO_CORE (the matching libretro core); either may be empty.
+# Results are reported the same way as for the other emutest platforms: the
+# program returns EXIT_SUCCESS or EXIT_FAILURE (see README.md). The program is
+# always built; up to two CTest tests run it:
+#   test-<name>          under VICE via vice-runner.py, when VICE_EMULATOR and
+#                        Python are available; on the c128 it also checks that
+#                        the Common-RAM code area is restored at exit
+#   test-<name>-libretro under emutest with the libretro VICE core, when
+#                        EMUTEST_COMMAND and VICE_LIBRETRO_CORE are set
 #   name          - target/test name; the source is <name>.c unless SOURCE is given
 #   SOURCE        - source file, to build one source with different link options
 #   LINK_OPTIONS  - extra link options
-#   RESTORE_RANGE - hex start-end of the Common-RAM code area the runner checks
-#                   is restored at exit (default: the platform default)
+#   RESTORE_RANGE - c128: hex start-end of the Common-RAM code area the runner
+#                   checks is restored at exit (default: the platform default)
 function(add_vice_test name)
   cmake_parse_arguments(ARG "" "SOURCE;RESTORE_RANGE" "LINK_OPTIONS" ${ARGN})
   if(NOT ARG_SOURCE)
@@ -66,14 +69,14 @@ function(add_vice_test name)
   target_link_options(${name}.prg PRIVATE
     -Wl,-Map=$<TARGET_FILE:${name}.prg>.map -Wl,-u,test_result ${ARG_LINK_OPTIONS})
   find_program(VICE_TEST_PYTHON NAMES python python3)
-  if(VICE_X128_COMMAND AND VICE_TEST_PYTHON)
+  if(VICE_EMULATOR AND VICE_TEST_PYTHON)
     set(restore_args "")
     if(ARG_RESTORE_RANGE)
       set(restore_args --restore-range ${ARG_RESTORE_RANGE})
     endif()
     add_test(NAME test-${name} COMMAND ${VICE_TEST_PYTHON}
       ${CMAKE_CURRENT_SOURCE_DIR}/../vice-runner.py
-      --vice ${VICE_X128_COMMAND}
+      --vice ${VICE_EMULATOR}
       --prg $<TARGET_FILE:${name}.prg>
       --map $<TARGET_FILE:${name}.prg>.map
       ${restore_args})
@@ -81,16 +84,16 @@ function(add_vice_test name)
     set_tests_properties(test-${name} PROPERTIES
       RESOURCE_LOCK vice TIMEOUT 180)
   endif()
-  if(EMUTEST_COMMAND AND LIBRETRO_VICE_X128_CORE)
+  if(EMUTEST_COMMAND AND VICE_LIBRETRO_CORE)
     add_test(NAME test-${name}-libretro COMMAND ${EMUTEST_COMMAND} -T
-      -L ${LIBRETRO_VICE_X128_CORE}
+      -L ${VICE_LIBRETRO_CORE}
       -r $<TARGET_FILE:${name}.prg>
       -t ${CMAKE_CURRENT_SOURCE_DIR}/../emutest.lua)
   endif()
 endfunction()
 
-# Emulator test for the C128 that checks the program can hand control back to
-# BASIC. It is linked with save-basic.o, which provides the _Exit that returns
+# Emulator test for a VICE-emulated Commodore platform that checks the program
+# can hand control back to BASIC. It is linked with save-basic.o, which provides the _Exit that returns
 # to BASIC (so NOT with test-lib-emutest, whose _Exit would conflict); the
 # runner passes if BASIC's READY. prompt is on the screen afterwards. VICE only:
 # there is no signature for emutest to look for.
@@ -99,10 +102,10 @@ function(add_vice_basic_return_test name)
   target_link_options(${name}.prg PRIVATE
     -Wl,-Map=$<TARGET_FILE:${name}.prg>.map -l:save-basic.o)
   find_program(VICE_TEST_PYTHON NAMES python python3)
-  if(VICE_X128_COMMAND AND VICE_TEST_PYTHON)
+  if(VICE_EMULATOR AND VICE_TEST_PYTHON)
     add_test(NAME test-${name} COMMAND ${VICE_TEST_PYTHON}
       ${CMAKE_CURRENT_SOURCE_DIR}/../vice-runner.py
-      --vice ${VICE_X128_COMMAND}
+      --vice ${VICE_EMULATOR}
       --prg $<TARGET_FILE:${name}.prg>
       --map $<TARGET_FILE:${name}.prg>.map
       --expect-basic-prompt --timeout 30)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a C128 test program under VICE (x128) and report its result.
+"""Run a C64 or C128 test program under VICE (x64sc/x128) and report its result.
 
 Usage: vice-runner.py --vice <x128> --prg <test.prg> --map <test.map>
                       [--restore-range 0800-09ff] [--timeout 120]
@@ -13,7 +13,7 @@ spins. This script runs the program until the end of its exit handlers (the
 .fini_rts section), steps the CPU on through _Exit, dumps test_result through
 the VICE monitor, and decodes it.
 
-If the program links bank1.o (it has an .init.012 section), the
+On the c128, if the program links bank1.o (it has an .init.012 section), the
 "Common-RAM code area" that c128_bank1_call borrows is also checked: its
 bytes are dumped just before the program overwrites them and again after the
 exit handlers, and must be identical (the platform promises to restore

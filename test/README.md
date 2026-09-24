@@ -23,9 +23,10 @@ How to report results from a test case:
 * Exit from `main()` with a status code -- zero for success, non-zero for failure, or
 * Set the `EMUTEST_FB_CRC_PASS` variable to the CRC of a known good video frame (you can find these in the test log files.)
 
-## C128 tests (VICE)
+## C64 and C128 tests (VICE)
 
-`test/c128` holds the Commodore 128 tests. They are built and registered like
+`test/c128` holds the Commodore 128 tests, and `test/c64` a smaller set for the
+Commodore 64 (the exit-path tests below, run under VICE's `x64sc`). They are built and registered like
 the other platforms' (`ninja test-c128`, or `ninja test` for everything), and
 contain three kinds of test:
 
@@ -51,15 +52,17 @@ contain three kinds of test:
   runs under VICE only.
 
 VICE is found through the `VICE_DIR` environment variable (its install
-directory) or `-DVICE_X128_COMMAND=<path to x128>`. Without it the emulator
+directory) or `-DVICE_X128_COMMAND=<path to x128>` /
+`-DVICE_X64SC_COMMAND=<path to x64sc>`. Without it the emulator
 tests are not registered - the programs are still built, and the compile and
 no-compile tests still run. The tests need Python 3 for the runner and open an
 emulator window; CTest runs them one at a time.
 
 Each emulator test can also run headlessly under `emutest` with the libretro
-VICE core (`vice-libretro`, target `x128`), registered as `test-<name>-libretro`
-when `EMUTEST_COMMAND` and the core are found (`LIBRETRO_CORES_DIR` names the
-directory holding `vice_x128_libretro.so`/`.dylib`/`.dll`). That path takes a
+VICE core (`vice-libretro`, targets `x128` and `x64sc`), registered as
+`test-<name>-libretro` when `EMUTEST_COMMAND` and the core are found
+(`LIBRETRO_CORES_DIR` names the directory holding `vice_x128_libretro` and
+`vice_x64sc_libretro` with extension `.so`/`.dylib`/`.dll`). That path takes a
 fraction of a second per test, but it can only check the pass/fail signature:
 the Common-RAM restore check needs the monitor breakpoints of `vice-runner.py`.
 

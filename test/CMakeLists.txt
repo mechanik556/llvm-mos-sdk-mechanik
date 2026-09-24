@@ -17,9 +17,11 @@ function(add_test_target target)
       -DMESEN_COMMAND=${MESEN_COMMAND}
       -DEMUTEST_COMMAND=${EMUTEST_COMMAND}
       -DVICE_X128_COMMAND=${VICE_X128_COMMAND}
+      -DVICE_X64SC_COMMAND=${VICE_X64SC_COMMAND}
       -DLIBRETRO_STELLA_CORE=${LIBRETRO_STELLA_CORE}
       -DLIBRETRO_MESEN_CORE=${LIBRETRO_MESEN_CORE}
       -DLIBRETRO_VICE_X128_CORE=${LIBRETRO_VICE_X128_CORE}
+      -DLIBRETRO_VICE_X64SC_CORE=${LIBRETRO_VICE_X64SC_CORE}
       -DCMAKE_C_FLAGS=${config_flag}
       -DCMAKE_CXX_FLAGS=${config_flag}
       -DCMAKE_TOOLCHAIN_FILE=${CMAKE_SOURCE_DIR}/cmake/llvm-mos-toolchain.cmake
@@ -36,6 +38,7 @@ endfunction()
 add_custom_target(test)
 add_test_target(apple2)
 add_test_target(c128)
+add_test_target(c64)
 add_test_target(nes-nrom)
 add_test_target(nes-cnrom)
 add_test_target(nes-gtrom)
