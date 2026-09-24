@@ -78,7 +78,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get -y install build-essential flex bison xa65 dos2unix pkg-config
-          curl -L -o vice.tar.gz https://downloads.sourceforge.net/project/vice-emu/releases/vice-3.10.tar.gz
+          curl -fL --retry 3 -o vice.tar.gz https://downloads.sourceforge.net/project/vice-emu/releases/vice-3.10.tar.gz
+          echo "8e5bac18cbcb9f192380ad3ef881f8790f5b75c41d7b3da65d831985d864d6d1  vice.tar.gz" | sha256sum -c -
           tar xzf vice.tar.gz
           cd vice-3.10
           ./configure --prefix=${{ env.VICE_DIR }} --enable-headlessui --disable-html-docs --without-pulse --without-alsa --without-png --without-libcurl
