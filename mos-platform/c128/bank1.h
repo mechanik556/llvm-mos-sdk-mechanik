@@ -49,7 +49,9 @@
 //   enforced by the toolchain; use zero page or MOS_C128_BANK1_DATA.
 //
 // * Interrupts are disabled for the duration of each call; keep calls
-//   short.
+//   short. Only IRQs are masked: an NMI (e.g. the RESTORE key) can still
+//   occur. The KERNAL ROM stays mapped, so its handler works, but an NMI
+//   handler in ordinary RAM would not be reachable while bank 1 is mapped.
 //
 // * Declare bank-1 globals volatile if you need to be sure they are really
 //   loaded/stored: LTO may otherwise constant-fold a never-written global.
@@ -67,6 +69,10 @@
 //
 // * Initialized and zero-initialized bank-1 data are populated at program
 //   startup (bank1-load.c). Bank-1 memory is bank1's $1000-$BFFF.
+//
+// * Using bank 1 costs 16 bytes of the zero-page pool: the startup copy
+//   stages its data through a zero-page buffer (the only ordinary variable
+//   storage that is Common RAM).
 
 #ifndef _C128_BANK1_H
 #define _C128_BANK1_H
@@ -83,9 +89,10 @@ extern "C" {
 // switch back to whatever bank was mapped before the call. Interrupts are
 // disabled for the duration of the switched-away call.
 //
-// method must itself be placed in bank 1 via MOS_C128_BANK1_CODE (or be
-// reachable from code that is) - calling a bank-0-resident function this
-// way is safe but pointless, since no switch was actually needed.
+// method must itself be placed in bank 1 via MOS_C128_BANK1_CODE. A function
+// in ordinary bank-0 memory is not reachable once bank 1 is mapped - the CPU
+// would run whatever bank 1 holds at that address. Only code in Common RAM
+// ($0000-$0FFF) is visible from both banks.
 __attribute__((leaf, callback(1))) void c128_bank1_call(void (*method)(void));
 
 #ifdef __cplusplus

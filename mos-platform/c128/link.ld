@@ -34,8 +34,7 @@ MEMORY {
      * live here, not in ordinary `ram` - once CR selects bank 1, the next
      * instruction fetch has to land on the same physical bytes regardless
      * of which bank is mapped, which is only guaranteed within the 4K
-     * Common-RAM-Lo window bank1.s configures ($0000-$0FFF). The first
-     * implementation forgot this and hung mid-switch (found via VICE).
+     * Common-RAM-Lo window bank1.s configures ($0000-$0FFF).
      *
      * Default: the low end of BASIC's runtime stack, $0800-$09FF (512
      * bytes). BASIC fills that stack from $09FF downward and only the
@@ -60,6 +59,9 @@ MEMORY {
     common_code (rw) : ORIGIN = __c128_common_code_origin, LENGTH = __c128_common_code_length
 }
 
+ASSERT(__c128_common_code_origin + __c128_common_code_length <= 0x1000,
+       "c128: the Common-RAM code area must lie within $0000-$0FFF (4K Common RAM)")
+
 INCLUDE commodore.ld
 
 INPUT(init-mmu.o)
@@ -67,8 +69,7 @@ INPUT(init-mmu.o)
 /* MOS_C128_BANK1_CODE/_DATA content (bank1.h): placed in bank1 (VMA) but
  * loaded into ram alongside everything else (LMA), since ordinary PRG
  * loading only ever populates one bank - bank1-load.c copies it into
- * bank1 at startup. See work/M0_C128_BANKING_PLAN.md section 4.1 task 4
- * in llvm-mos-mechanik for the full reasoning. */
+ * bank1 at startup. */
 SECTIONS {
     .c128bank1.text : { *(.c128bank1.text) } >bank1 AT>ram
     .c128bank1.data : { *(.c128bank1.data) } >bank1 AT>ram

@@ -46,8 +46,8 @@ static const uint8_t pool_units[2] = {POOL0_UNITS, POOL1_UNITS};
 uint8_t mod_loads, mod_evictions;   // counters (for tests)
 uint8_t evict_log[16], evict_n;     // ids of evicted modules, in order (for tests)
 
-void __c128bank1_copy_region(char *vma, const char *lma, unsigned short size);
-void __c128bank1_read(char *dest, const char *src, unsigned short size);
+void proto_bank1_write(char *vma, const char *lma, unsigned short size);
+void proto_bank1_read(char *dest, const char *src, unsigned short size);
 
 static uint16_t pool_base(uint8_t bank) { return bank ? (uint16_t)pool1 : (uint16_t)pool0; }
 static uint8_t units_of(uint16_t size) { return (uint8_t)((size + UNIT - 1) / UNIT); }
@@ -75,12 +75,12 @@ static void release(uint8_t bank, uint8_t start, uint8_t units) {
 // Byte/word access to a resident module's memory in either bank.
 static uint8_t get8(uint8_t bank, uint16_t a) {
   uint8_t v;
-  if (bank) __c128bank1_read((char *)&v, (const char *)a, 1);
+  if (bank) proto_bank1_read((char *)&v, (const char *)a, 1);
   else v = *(volatile uint8_t *)a;
   return v;
 }
 static void set8(uint8_t bank, uint16_t a, uint8_t v) {
-  if (bank) __c128bank1_copy_region((char *)a, (const char *)&v, 1);
+  if (bank) proto_bank1_write((char *)a, (const char *)&v, 1);
   else *(volatile uint8_t *)a = v;
 }
 static uint16_t get16(uint8_t bank, uint16_t a) { return get8(bank, a) | ((uint16_t)get8(bank, a + 1) << 8); }
@@ -121,7 +121,7 @@ uint8_t mod_evict(uint8_t id) {
   // Un-relocate in place by delta subtraction, then write the canonical
   // image back to the backing store (the program image here).
   apply_relocs(bank, addr, mt_reloc[id], (uint16_t)(mt_img[id] - addr));
-  if (bank) __c128bank1_read((char *)mt_img[id], (const char *)addr, size);
+  if (bank) proto_bank1_read((char *)mt_img[id], (const char *)addr, size);
   else memcpy((void *)mt_img[id], (const void *)addr, size);
   release(bank, (uint8_t)((addr - pool_base(bank)) / UNIT), units);
   mt_addr[id] = 0;
@@ -167,9 +167,9 @@ static void xcopy(uint8_t dbank, uint16_t dst, uint8_t sbank, uint16_t src, uint
   uint8_t buf[16];
   while (size) {
     uint8_t n = size > 16 ? 16 : (uint8_t)size;
-    if (sbank) __c128bank1_read((char *)buf, (const char *)src, n);
+    if (sbank) proto_bank1_read((char *)buf, (const char *)src, n);
     else memcpy(buf, (const void *)src, n);
-    if (dbank) __c128bank1_copy_region((char *)dst, (const char *)buf, n);
+    if (dbank) proto_bank1_write((char *)dst, (const char *)buf, n);
     else memcpy((void *)dst, buf, n);
     dst += n; src += n; size -= n;
   }
@@ -354,7 +354,7 @@ uint8_t mod_load(uint8_t id) {
   if (idx == 0xFF) return 1;
   {
     uint16_t dest = pool_base(bank) + (uint16_t)idx * UNIT;
-    if (bank) __c128bank1_copy_region((char *)dest, (const char *)mt_img[id], size);
+    if (bank) proto_bank1_write((char *)dest, (const char *)mt_img[id], size);
     else memcpy((void *)dest, (const void *)mt_img[id], size);
     apply_relocs(bank, dest, mt_reloc[id], (uint16_t)(dest - mt_img[id]));
     mt_addr[id] = dest;
