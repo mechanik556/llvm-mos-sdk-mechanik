@@ -91,6 +91,9 @@ fc_inc:
 fc_calld:
 	CALL 3, fd_x2 - modD_start
 	rts
+fc_calla:                        ; bank-1 (or wherever C is) -> module A
+	CALL 0, fa_add1 - modA_start
+	rts
 
 	PAD 2
 
@@ -295,7 +298,15 @@ mt_reloc: .word noreloc, noreloc, noreloc, noreloc, noreloc
 .globl m_double, m_cb, m_chain, m_sum, m_calld, t_carry, t_cin, t_iflag, t_inest, t_fail
 .globl m_r_entry, m_r_viaptr, m_r_lohi, m_r_call_sm, m_r_sm_to_b, m_r_try_evict
 .globl m_f_add7, m_h_double, m_g_incr, m_g_sum, host_tab
-.globl m_add1, m_rec, m_calle, m_r_try_big, m_r_try_defrag
+.globl m_add1, m_rec, m_calle, m_r_try_big, m_r_try_defrag, m_c_inc, m_c_calla, m_base
+m_base:                          ; no-op stub for measuring loop/call overhead
+	rts
+m_c_inc:                         ; gate call into module C (bank 1 when bank 0 is full)
+	CALL 2, fc_inc - modC_start
+	rts
+m_c_calla:
+	CALL 2, fc_calla - modC_start
+	rts
 m_r_try_defrag:
 	CALL 5, r_try_defrag - modR_start
 	rts

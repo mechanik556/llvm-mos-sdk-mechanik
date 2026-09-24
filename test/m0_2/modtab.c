@@ -19,10 +19,15 @@
 #define POOL1_UNITS 32
 #define HOST 6            // static, always-resident module (the "base program")
 
-uint16_t mt_addr[NMODS];
-uint8_t mt_cr[NMODS];
-volatile uint8_t mt_active[NMODS];
-volatile uint8_t mt_ref[NMODS];    // CLOCK reference bit, set by the gate on every call
+#ifdef COMMON_TABLES   /* variant gate (gate_ct.s): tables in Common RAM, reachable from any bank */
+#define CT __attribute__((section(".c128commoncode.tables")))
+#else
+#define CT
+#endif
+CT uint16_t mt_addr[NMODS];
+CT uint8_t mt_cr[NMODS];
+CT volatile uint8_t mt_active[NMODS];
+CT volatile uint8_t mt_ref[NMODS];    // CLOCK reference bit, set by the gate on every call
 static uint16_t mt_stamp[NMODS];   // load order (tie-break among equally cold modules)
 static uint16_t stamp_clock;
 extern const uint16_t mt_img[NMODS];    // canonical image address (bank 0)

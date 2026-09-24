@@ -10,5 +10,5 @@ SDK_INSTALL="${SDK_INSTALL:-/c/Users/mecha/git/llvm-mos-sdk-mechanik/install}"
 WORK="${WORK:-/tmp/mos_test}"; mkdir -p "$WORK"; cd "$WORK"
 STAGE="${1:-gate_test}"
 "$MOS_CLANG" --config "$SDK_INSTALL/bin/mos-c128.cfg" -mlto-zp=70 $EXTRA_FLAGS \
-  -o "$STAGE.prg" -Wl,-Map="$STAGE.map" "$HERE/$STAGE.c" "$HERE/gate.s" "$HERE/modules.s" "$HERE/modtab.c"
+  -o "$STAGE.prg" -Wl,-Map="$STAGE.map" "$HERE/$STAGE.c" "$HERE/${GATE:-gate.s}" "$HERE/modules.s" "$HERE/modtab.c"
 bash "$HERE/../run_vice_syms.sh" "$STAGE.prg" "$STAGE.map" "${2:-r0 r1 r2 r3 r4 err}"

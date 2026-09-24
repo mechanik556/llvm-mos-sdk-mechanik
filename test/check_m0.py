@@ -37,10 +37,37 @@ def check(title, vals, expected):
 def m0_2(stage, syms, expected, title, extra=""):
     import os
     env = dict(os.environ)
-    if extra:
-        env["EXTRA_FLAGS"] = extra
+    if extra:  # appended, so an outer EXTRA_FLAGS (e.g. -DCOMMON_TABLES) survives
+        env["EXTRA_FLAGS"] = (env.get("EXTRA_FLAGS", "") + " " + extra).strip()
     out = run([BASH, str(HERE / "m0_2" / "run.sh"), stage, " ".join(syms)], env)
     return check(title, parse(out), expected)
+
+def cost(title):
+    """Gate cost (test/m0_2/cost_test.c): cycles per gate round trip on the hit
+    path, exact under VICE (display blanked, IRQs off). Asserts a band, not an
+    exact value, so small gate tweaks don't need a test edit; the measured
+    values are recorded in the milestone doc (M0_C128_BANKING_PLAN.md, 3)."""
+    import os
+    syms = ["t_base:2", "t_00:2", "t_01:2", "t_010:2", "t_0111:2", "t_miss_a:2",
+            "t_miss_b:2", "t_miss_c:2", "cr_a", "cr_b", "cr_c", "cr_d", "loads"]
+    out = run([BASH, str(HERE / "m0_2" / "run.sh"), "cost_test", " ".join(syms)], dict(os.environ))
+    v = parse(out)
+    def w(k):
+        b = v.get(k, "00 00").split()
+        return int(b[0], 16) + 256 * int(b[1], 16)
+    reps = 16
+    per = {k: (w(k) - w("t_base")) / reps for k in ("t_00", "t_01")}
+    per["t_010"] = (w("t_010") - w("t_base")) / reps / 2
+    per["t_0111"] = (w("t_0111") - w("t_base")) / reps / 2
+    good = (v.get("cr_a") == "0E" and v.get("cr_b") == "0E" and v.get("cr_c") == "4E"
+            and v.get("cr_d") == "4E" and v.get("loads") == "04"
+            and all(340 <= x <= 370 for x in per.values())
+            and 30000 <= w("t_miss_a") < w("t_miss_b") and w("t_miss_c") < 65535)
+    print(("PASS " if good else "FAIL ") + title)
+    print("    per gate crossing (cycles, incl. trivial callee): "
+          + ", ".join(f"{k[2:]}={x:.0f}" for k, x in per.items())
+          + f"; miss (load+call): A={w('t_miss_a')} B={w('t_miss_b')} C={w('t_miss_c')}")
+    return good
 
 def main():
     ok = True
@@ -91,6 +118,7 @@ def main():
                   "qa1": "02", "qa2": "0D", "qa3": "0F", "qa4": "0F", "e_moved": "01", "e_same": "01",
                   "e_data": "01", "frag_ok": "01", "big_ok": "01", "big_b": "01", "a_data": "01"}
     ok &= m0_2("defrag_test", defrag_syms, defrag_exp, "M0.2 defragmentation (module relocation, pinning, auto on alloc)")
+    ok &= cost("M0.2 gate cost: hit path ~350 cycles per crossing in every bank pairing")
     # M0.1 tests use zero-page/screen output; check via the screen text.
     for t, want in (("m0_bank1_test", "initial=153 after=154"),
                     ("m0_bank1_test2", "counter=200 cr=14")):
