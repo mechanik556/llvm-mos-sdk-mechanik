@@ -1,6 +1,6 @@
 #include <bank1.h>
 #include <stdint.h>
-#include <test-lib-emutest.h>
+#include <stdlib.h>
 
 /* Checks the claim in bank1.h that while bank 1 is mapped an ordinary bank-0
  * global at address X is NOT visible: the same address reads and writes bank
@@ -32,6 +32,5 @@ int main(void) {
   c128_bank1_call(poke);
   g0_after = g0;
   c128_bank1_call(local);
-  test_set_result(r_read1 == 0x22 && g0_after == 0x11 && r_local == 21);
-  return 0;
+  return (r_read1 == 0x22 && g0_after == 0x11 && r_local == 21) ? EXIT_SUCCESS : EXIT_FAILURE;
 }

@@ -42,9 +42,10 @@ function(add_no_compile_test target)
 endfunction()
 
 # Emulator test for the C128, run under VICE (x128) by vice-runner.py.
-# Results are reported the same way as for emutest: the program calls
-# test_set_result(bool) (see README.md). The test is only registered with CTest
-# when VICE_X128_COMMAND and Python are available; the program is always built.
+# Results are reported the same way as for emutest: the program returns
+# EXIT_SUCCESS or EXIT_FAILURE (see README.md). The test is only registered with
+# CTest when VICE_X128_COMMAND and Python are available; the program is always
+# built.
 #   name          - target/test name; the source is <name>.c unless SOURCE is given
 #   SOURCE        - source file, to build one source with different link options
 #   LINK_OPTIONS  - extra link options

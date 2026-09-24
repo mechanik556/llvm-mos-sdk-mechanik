@@ -1,5 +1,5 @@
 #include <bank1.h>
-#include <test-lib-emutest.h>
+#include <stdlib.h>
 
 /* The load-time copy of bank-1 data crosses many 255-byte chunks and page
  * boundaries. bank1_table holds 4096 initialized bytes; bank-1 code sums them
@@ -34,6 +34,5 @@ int main(void) {
   unsigned int i, expect = 0;
   for (i = 0; i < TABLE_SIZE; i++) expect += (unsigned char)(i * 7 + 3);
   c128_bank1_call(sum_table);
-  test_set_result(r_sum == expect && r_first == E1(0) && r_last == E1(TABLE_SIZE - 1));
-  return 0;
+  return (r_sum == expect && r_first == E1(0) && r_last == E1(TABLE_SIZE - 1)) ? EXIT_SUCCESS : EXIT_FAILURE;
 }

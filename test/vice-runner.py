@@ -5,11 +5,12 @@ Usage: vice-runner.py --vice <x128> --prg <test.prg> --map <test.map>
                       [--restore-range 0800-09ff] [--timeout 120]
 
 Result protocol: the same one the emutest runner uses (see test/README.md and
-test-lib-emutest.c). The test calls test_set_result(bool), which stores the
-signature "TestPass" or "TestFail" in the RAM array test_result. This script
-runs the program until the end of its exit handlers (the .fini_rts section,
-reached both when main returns and when exit() is called), dumps test_result
-through the VICE monitor, and decodes it.
+test-lib-emutest.c). The program exits with a status - returning it from main,
+or calling exit() - and test-lib-emutest's _Exit stores the signature
+"TestPass" (status 0) or "TestFail" in the RAM array test_result and then
+spins. This script runs the program until the end of its exit handlers (the
+.fini_rts section), steps the CPU on through _Exit, dumps test_result through
+the VICE monitor, and decodes it.
 
 If the program links bank1.o (it has an .init.012 section), the
 "Common-RAM code area" that c128_bank1_call borrows is also checked: its
@@ -19,7 +20,7 @@ them). The area defaults to the platform default, $0800-$09FF; pass
 --restore-range if the test moves it.
 
 Exit status: 0 pass, 1 fail, 2 no result (crash, hang, timeout, or the
-signature was never set).
+program never reached _Exit).
 """
 import argparse
 import os
@@ -30,6 +31,10 @@ import tempfile
 import time
 
 SIGNATURES = {b"TestPass": 0, b"TestFail": 1}
+
+# Instructions to execute after the exit handlers so _Exit can store the
+# signature (about a hundred are needed; the rest are the spin loop).
+EXIT_STEPS = 3000
 
 
 def parse_map(path):
@@ -77,18 +82,20 @@ def main():
         def p(name):
             return os.path.join(tmp, name).replace("\\", "/")
 
-        mon = []
+        # Read RAM, not the CPU's current view: after the exit handlers restore
+        # BASIC's memory configuration, $4000-$BFFF shows BASIC ROM.
+        mon = ["bank ram"]
         if check_restore:
             # First stop: just before .init.012 copies the common code over the area.
             mon += [f'save "{p("before.bin")}" 0 {lo:04x} {hi:04x}',
-                    f"break {end_addr:x}", "x"]
+                    f"break {end_addr:x}", "x",
+                    f'save "{p("after.bin")}" 0 {lo:04x} {hi:04x}']
             first_stop = sections[".init.012"]
         else:
             first_stop = end_addr
-        mon += [f'save "{p("result.bin")}" 0 {result_addr:04x} {result_addr + 7:04x}']
-        if check_restore:
-            mon += [f'save "{p("after.bin")}" 0 {lo:04x} {hi:04x}']
-        mon += ["quit"]
+        mon += [f"z {EXIT_STEPS}",
+                f'save "{p("result.bin")}" 0 {result_addr:04x} {result_addr + 7:04x}',
+                "quit"]
         with open(p("script.mon"), "w") as f:
             f.write("\n".join(mon) + "\n")
 
@@ -111,11 +118,17 @@ def main():
         sig = strip_header(open(p("result.bin"), "rb").read())[:8]
         status = SIGNATURES.get(sig)
         if status is None:
-            print(f"FAIL (no result): test_result holds {sig!r}; the test never "
-                  "called test_set_result()")
+            hint = ""
+            if result_addr >= 0x4000:
+                hint = (f" test_result is at ${result_addr:04X}: above $4000 the exit "
+                        "handlers have already put BASIC's ROM back over RAM, so _Exit "
+                        "may read the wrong signature. Keep the test program small "
+                        "(see test/README.md).")
+            print(f"FAIL (no result): test_result holds {sig!r}; the program never "
+                  "reached _Exit (is test-lib-emutest linked?)." + hint)
             return 2
         if status != 0:
-            print("FAIL: the test reported failure (TestFail)")
+            print("FAIL: the program exited with a failure status (TestFail)")
             return 1
         if check_restore:
             before = strip_header(open(p("before.bin"), "rb").read())

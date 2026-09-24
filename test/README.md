@@ -34,11 +34,23 @@ contain three kinds of test:
   memory region (`add_no_compile_test`).
 * Emulator tests (`add_vice_test`) - run under VICE's `x128` by
   `test/vice-runner.py` and reported through the same protocol as the emutest
-  tests above: the program calls `test_set_result(bool)` (from
-  `test-lib-emutest`), which stores `TestPass`/`TestFail` in the RAM array
-  `test_result`. The runner runs the program until its exit handlers have
-  finished (a program that hangs or never sets a result fails), reads
-  `test_result` through the VICE monitor, and decodes it.
+  tests above: the program exits with a status - returns `EXIT_SUCCESS` or
+  `EXIT_FAILURE` from `main` - and `test-lib-emutest`'s `_Exit` stores
+  `TestPass`/`TestFail` in the RAM array `test_result`. The runner runs the
+  program through its exit handlers and `_Exit` (a program that hangs or never
+  exits fails), reads `test_result` from RAM through the VICE monitor, and
+  decodes it.
+
+  Do not call `test_set_result()` and then `return 0`: on this platform
+  returning from `main` goes through `exit()` to `_Exit(0)`, which overwrites
+  the signature with `TestPass`. Return the status instead.
+
+  Keep emulator test programs small. At exit the platform restores BASIC's
+  memory configuration before `_Exit` runs, which maps ROM over `$4000-$BFFF`;
+  a program whose `.rodata` or `test_result` lies above `$4000` (roughly, one
+  that pulls in stdio) makes `_Exit` store ROM bytes instead of the signature,
+  and the runner reports "no result". Use the KERNAL wrappers in `<cbm.h>`
+  rather than `printf` where a test needs screen or disk activity.
 
 VICE is found through the `VICE_DIR` environment variable (its install
 directory) or `-DVICE_X128_COMMAND=<path to x128>`. Without it the emulator

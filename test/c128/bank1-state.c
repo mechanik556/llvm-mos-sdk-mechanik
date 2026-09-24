@@ -1,5 +1,5 @@
 #include <bank1.h>
-#include <test-lib-emutest.h>
+#include <stdlib.h>
 
 /* What a c128_bank1_call must leave undisturbed in the caller's world:
  *  - 200 calls persist (counter reaches 200);
@@ -55,7 +55,5 @@ int main(void) {
   j3 = *(volatile unsigned char *)0xA2;
 
   c128_bank1_call(read_counter);
-  test_set_result(r_counter == 200 && cr == 0x0E && j1 != j0 && j3 != j2 &&
-                  sp0 == sp1 && s1 == 0xA5 && s2 == 0x5A);
-  return 0;
+  return (r_counter == 200 && cr == 0x0E && j1 != j0 && j3 != j2 && sp0 == sp1 && s1 == 0xA5 && s2 == 0x5A) ? EXIT_SUCCESS : EXIT_FAILURE;
 }

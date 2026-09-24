@@ -1,5 +1,5 @@
 #include <bank1.h>
-#include <test-lib-emutest.h>
+#include <stdlib.h>
 
 /* Static bank-1 placement, end to end:
  * - bank1_initial's non-zero initializer proves the load-time
@@ -35,6 +35,5 @@ int main(void) {
   c128_bank1_call(read_initial);
   c128_bank1_call(set_value);
   c128_bank1_call(read_value);
-  test_set_result(result_initial == 0x99 && result_after == 0x9A);
-  return 0;
+  return (result_initial == 0x99 && result_after == 0x9A) ? EXIT_SUCCESS : EXIT_FAILURE;
 }

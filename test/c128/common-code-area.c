@@ -1,6 +1,6 @@
 #include <bank1.h>
-#include <stdio.h>
-#include <test-lib-emutest.h>
+#include <cbm.h>
+#include <stdlib.h>
 
 /* The default Common-RAM code area is the low end of BASIC's runtime stack
  * ($0800). Two properties matter:
@@ -10,8 +10,11 @@
  *      (the checksum must not change);
  *  (b) the original contents of $0800-$09FF are restored at exit. That is
  *      checked by the runner (vice-runner.py), not here.
- * The fopen is expected to fail under VICE's autostart (no file of that name);
- * it is only there to run the OPEN/serial-bus KERNAL routines.
+ * The OPEN is expected to fail under VICE's autostart (no file of that name);
+ * it is only there to run the serial-bus KERNAL routines.
+ *
+ * Calls the KERNAL directly rather than through stdio to keep the program
+ * small: see the note about programs larger than $4000 in test/README.md.
  */
 
 MOS_C128_BANK1_DATA static volatile unsigned char x;
@@ -26,20 +29,23 @@ static unsigned int checksum(void) {
 }
 
 int main(void) {
-  unsigned char i;
+  static const char text[] = "line ";
+  unsigned char i, j;
   unsigned int before, after;
   before = checksum();
   c128_bank1_call(touch);
-  for (i = 0; i < 40; i++) printf("line %d\n", i);
-  {
-    FILE *f = fopen("no-such-file", "r");
-    if (f) {
-      for (i = 0; i < 100; i++) fgetc(f);
-      fclose(f);
-    }
+  for (i = 0; i < 40; i++) {
+    for (j = 0; text[j]; j++) cbm_k_chrout(text[j]);
+    cbm_k_chrout('0' + i / 10);
+    cbm_k_chrout('0' + i % 10);
+    cbm_k_chrout('\r');
   }
+  cbm_k_setlfs(2, 8, 2);
+  cbm_k_setnam("no-such-file");
+  cbm_k_open();
+  cbm_k_clrch();
+  cbm_k_close(2);
   c128_bank1_call(touch);
   after = checksum();
-  test_set_result(before == after);
-  return 0;
+  return (before == after) ? EXIT_SUCCESS : EXIT_FAILURE;
 }
