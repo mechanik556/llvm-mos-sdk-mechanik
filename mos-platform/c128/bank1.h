@@ -11,7 +11,7 @@
 // so calling into bank-1-resident code requires switching the MMU's
 // Configuration Register first and switching it back afterward.
 //
-// Usage pattern (see test/m0_bank1_test*.c):
+// Usage pattern (see test/c128/bank1-*.c):
 //
 //   MOS_C128_BANK1_DATA static volatile unsigned char table[64];
 //   static volatile unsigned char __attribute__((section(".zp.bss"))) result;
@@ -44,7 +44,7 @@
 //   (locals, spills, stack-passed arguments) and ordinary globals: their
 //   memory is in bank 0 at a non-common address, so bank-1 code silently
 //   reads and writes bank 1's own memory at that same address instead
-//   (confirmed by test/m0_bank1_test4.c). Locals work as private scratch,
+//   (confirmed by test/c128/bank1-isolation.c). Locals work as private scratch,
 //   but that address may fall inside bank-1 content and corrupt it. Not
 //   enforced by the toolchain; use zero page or MOS_C128_BANK1_DATA.
 //

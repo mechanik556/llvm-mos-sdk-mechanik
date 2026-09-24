@@ -22,3 +22,43 @@ How to report results from a test case:
 * Call `test_set_result(bool)` with a pass/fail value, and then go into a busy loop or video display loop, or
 * Exit from `main()` with a status code -- zero for success, non-zero for failure, or
 * Set the `EMUTEST_FB_CRC_PASS` variable to the CRC of a known good video frame (you can find these in the test log files.)
+
+## C128 tests (VICE)
+
+`test/c128` holds the Commodore 128 tests. They are built and registered like
+the other platforms' (`ninja test-c128`, or `ninja test` for everything), and
+contain three kinds of test:
+
+* `compile/` - programs that must build and link (`add_compile_test`).
+* `no-compile/` - programs that must fail to link, e.g. by overflowing a
+  memory region (`add_no_compile_test`).
+* Emulator tests (`add_vice_test`) - run under VICE's `x128` by
+  `test/vice-runner.py` and reported through the same protocol as the emutest
+  tests above: the program calls `test_set_result(bool)` (from
+  `test-lib-emutest`), which stores `TestPass`/`TestFail` in the RAM array
+  `test_result`. The runner runs the program until its exit handlers have
+  finished (a program that hangs or never sets a result fails), reads
+  `test_result` through the VICE monitor, and decodes it.
+
+VICE is found through the `VICE_DIR` environment variable (its install
+directory) or `-DVICE_X128_COMMAND=<path to x128>`. Without it the emulator
+tests are not registered - the programs are still built, and the compile and
+no-compile tests still run. The tests need Python 3 for the runner and open an
+emulator window; CTest runs them one at a time.
+
+```cmake
+  add_vice_test(<name>)                 # <name>.c
+  add_vice_test(<name> SOURCE other.c   # same source, different link options
+    LINK_OPTIONS -Wl,--defsym=...
+    RESTORE_RANGE 0c00-0dff)            # Common-RAM code area (see below)
+```
+
+When a program links the C128 bank-1 support (`bank1.h`), the runner also
+checks the platform's promise to restore the Common-RAM code area at exit: it
+dumps `$0800-$09FF` (or `RESTORE_RANGE`) before the platform first overwrites
+it and again after the exit handlers, and the two must be identical.
+
+Run `vice-runner.py` directly for one program (`--vice`, `--prg`, `--map`; the
+map is written by `-Wl,-Map=`); its exit status is 0 for pass, 1 for fail and 2
+for no result.
+

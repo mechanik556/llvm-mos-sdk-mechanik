@@ -52,6 +52,13 @@ if(NOT CMAKE_CROSSCOMPILING)
     PATHS ENV EMUTEST_DIR)
   message(STATUS "Emutest test runner: ${EMUTEST_COMMAND}")
 
+  # VICE's C128 emulator runs the c128 tests (test/vice-runner.py). Set the
+  # VICE_DIR environment variable to VICE's install directory, or pass
+  # -DVICE_X128_COMMAND=<path>; without it the c128 emulator tests are skipped.
+  find_program(VICE_X128_COMMAND NAMES x128 x128.exe
+    PATHS ENV VICE_DIR PATH_SUFFIXES bin)
+  message(STATUS "VICE x128: ${VICE_X128_COMMAND}")
+
   find_library(LIBRETRO_STELLA_CORE
     NAMES
     stella2014_libretro.so stella2014_libretro.dylib stella2014_libretro.dll

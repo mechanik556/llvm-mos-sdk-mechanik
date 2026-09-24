@@ -16,6 +16,7 @@ function(add_test_target target)
       -DLLVM_MOS=${llvm_mos}
       -DMESEN_COMMAND=${MESEN_COMMAND}
       -DEMUTEST_COMMAND=${EMUTEST_COMMAND}
+      -DVICE_X128_COMMAND=${VICE_X128_COMMAND}
       -DLIBRETRO_STELLA_CORE=${LIBRETRO_STELLA_CORE}
       -DLIBRETRO_MESEN_CORE=${LIBRETRO_MESEN_CORE}
       -DCMAKE_C_FLAGS=${config_flag}
@@ -33,6 +34,7 @@ endfunction()
 
 add_custom_target(test)
 add_test_target(apple2)
+add_test_target(c128)
 add_test_target(nes-nrom)
 add_test_target(nes-cnrom)
 add_test_target(nes-gtrom)

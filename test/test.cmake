@@ -41,6 +41,44 @@ function(add_no_compile_test target)
   set_property(TEST ${target}-no-compile PROPERTY WILL_FAIL YES)
 endfunction()
 
+# Emulator test for the C128, run under VICE (x128) by vice-runner.py.
+# Results are reported the same way as for emutest: the program calls
+# test_set_result(bool) (see README.md). The test is only registered with CTest
+# when VICE_X128_COMMAND and Python are available; the program is always built.
+#   name          - target/test name; the source is <name>.c unless SOURCE is given
+#   SOURCE        - source file, to build one source with different link options
+#   LINK_OPTIONS  - extra link options
+#   RESTORE_RANGE - hex start-end of the Common-RAM code area the runner checks
+#                   is restored at exit (default: the platform default)
+function(add_vice_test name)
+  cmake_parse_arguments(ARG "" "SOURCE;RESTORE_RANGE" "LINK_OPTIONS" ${ARGN})
+  if(NOT ARG_SOURCE)
+    set(ARG_SOURCE ${name}.c)
+  endif()
+  add_executable(${name}.prg ${ARG_SOURCE})
+  target_link_libraries(${name}.prg test-lib-emutest)
+  # -u: LTO would otherwise delete test_result, which the program only writes
+  # and the runner reads from outside.
+  target_link_options(${name}.prg PRIVATE
+    -Wl,-Map=$<TARGET_FILE:${name}.prg>.map -Wl,-u,test_result ${ARG_LINK_OPTIONS})
+  find_program(VICE_TEST_PYTHON NAMES python python3)
+  if(VICE_X128_COMMAND AND VICE_TEST_PYTHON)
+    set(restore_args "")
+    if(ARG_RESTORE_RANGE)
+      set(restore_args --restore-range ${ARG_RESTORE_RANGE})
+    endif()
+    add_test(NAME test-${name} COMMAND ${VICE_TEST_PYTHON}
+      ${CMAKE_CURRENT_SOURCE_DIR}/../vice-runner.py
+      --vice ${VICE_X128_COMMAND}
+      --prg $<TARGET_FILE:${name}.prg>
+      --map $<TARGET_FILE:${name}.prg>.map
+      ${restore_args})
+    # One emulator at a time: instances share VICE's settings and audio.
+    set_tests_properties(test-${name} PROPERTIES
+      RESOURCE_LOCK vice TIMEOUT 180)
+  endif()
+endfunction()
+
 function(add_vcs_test name)
   set(source_dir ".")
   if(ARGC GREATER 1)
