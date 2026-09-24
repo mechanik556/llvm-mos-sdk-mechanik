@@ -12,9 +12,6 @@
  *      checked by the runner (vice-runner.py), not here.
  * The OPEN is expected to fail under VICE's autostart (no file of that name);
  * it is only there to run the serial-bus KERNAL routines.
- *
- * Calls the KERNAL directly rather than through stdio to keep the program
- * small: see the note about programs larger than $4000 in test/README.md.
  */
 
 MOS_C128_BANK1_DATA static volatile unsigned char x;
