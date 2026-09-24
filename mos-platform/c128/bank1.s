@@ -61,7 +61,9 @@ c128_bank1_call:
 .Lc128_bank1_call_indir:
 	jmp (__rc18)
 
-.bss
+; Saved at .init.011, before the .bss is zeroed (.init.200), so it must not live
+; in .bss (it would be restored as $00, disabling Common RAM at exit).
+.section .noinit,"aw",@nobits
 __rcrsave:
 	.fill 1
 
@@ -74,13 +76,14 @@ __rcrsave:
 ; file is an ordinary library member, not force-included like
 ; init-mmu.o - programs that never use bank 1 pay nothing for this.
 ;
-; Shared-Hi's enable bit is preserved as-is (read-modify-write, not a
-; blind overwrite) rather than assumed disabled, in case something else
-; already configured it before this runs.
+; Only the Shared-Lo enable and size bits (2-0) are changed (read-modify-write,
+; not a blind overwrite): the VIC bank select (bits 7-6) and the Shared-Hi
+; enable (bit 3) are kept as they were. Note the size field is shared, so if
+; Shared-Hi is enabled its size becomes 4K too.
 .section .init.011,"ax",@progbits
 	lda RCR
 	sta __rcrsave
-	and #%00001000
+	and #%11111000
 	ora #RCR_SHARED_LO_4K
 	sta RCR
 
