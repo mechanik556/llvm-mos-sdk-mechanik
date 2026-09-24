@@ -1,11 +1,16 @@
 #!/usr/bin/env python
-"""Run every M0 (C128 banking) test under VICE and assert the expected values.
+"""Run the M0.2 dynamic-module PROTOTYPE tests under VICE and assert expected values.
 
 Usage (Git Bash, after `ninja mos-platform/install` in the SDK build dir):
-    python test/check_m0.py
-Each case shells out to the existing runners, which build the test with the
-freshly installed SDK and run it in x128; this script parses their
-"symbol $ADDR: bytes" output and compares. Takes several minutes.
+    python prototypes/c128-dynamic/check_m0.py
+Each case shells out to m0_2/run.sh, which builds the test with the freshly
+installed SDK and runs it in x128; this script parses the "symbol $ADDR:
+bytes" output and compares. Takes several minutes.
+
+These tests belong to the prototype (gate.s, modtab.c, modules.s) and inspect
+its internal state, so they read memory dumps rather than reporting through
+test_set_result(). The M0.1 (static bank-1 placement) tests are ordinary SDK
+tests: see test/c128 and `ninja test-c128`.
 """
 import re
 import subprocess
@@ -43,7 +48,7 @@ def m0_2(stage, syms, expected, title, extra=""):
     return check(title, parse(out), expected)
 
 def cost(title):
-    """Gate cost (test/m0_2/cost_test.c): cycles per gate round trip on the hit
+    """Gate cost (m0_2/cost_test.c): cycles per gate round trip on the hit
     path, exact under VICE (display blanked, IRQs off). Asserts a band, not an
     exact value, so small gate tweaks don't need a test edit; the measured
     values are recorded in the milestone doc (M0_C128_BANKING_PLAN.md, 3)."""
@@ -119,13 +124,6 @@ def main():
                   "e_data": "01", "frag_ok": "01", "big_ok": "01", "big_b": "01", "a_data": "01"}
     ok &= m0_2("defrag_test", defrag_syms, defrag_exp, "M0.2 defragmentation (module relocation, pinning, auto on alloc)")
     ok &= cost("M0.2 gate cost: hit path ~350 cycles per crossing in every bank pairing")
-    # M0.1 tests use zero-page/screen output; check via the screen text.
-    for t, want in (("m0_bank1_test", "initial=153 after=154"),
-                    ("m0_bank1_test2", "counter=200 cr=14")):
-        out = run([BASH, str(HERE / "run_m0_vice.sh"), str(HERE / f"{t}.c")])
-        good = want in out
-        print(("PASS " if good else "FAIL ") + f"M0.1 {t}: screen shows '{want}'")
-        ok &= good
     print("ALL PASS" if ok else "SOME FAILED")
     return 0 if ok else 1
 
