@@ -5,6 +5,7 @@ env:
   MESEN_DIR: ${{ github.workspace }}/tt/mesen
   EMUTEST_DIR: ${{ github.workspace }}/tt/emutest
   LIBRETRO_CORES_DIR: ${{ github.workspace }}/tt/libretro
+  VICE_DIR: ${{ github.workspace }}/tt/vice
 on:
   push:
     branches: [ main ]
@@ -66,6 +67,23 @@ jobs:
           make objectclean EMUTYPE=x128
           make --silent -j 4 EMUTYPE=x64sc
           mv vice_x64sc_libretro.so ${{ env.LIBRETRO_CORES_DIR }}
+      # Desktop VICE for the tests that need its monitor (test/vice-runner.py).
+      # Built from the release tarball rather than installed: Ubuntu's package
+      # is stripped of the C64/C128 ROMs, so its emulators cannot start. The
+      # headless UI needs no display. Not fatal if it fails: the tests that
+      # need VICE are then skipped, as they are wherever VICE_DIR is unset.
+      - name: Build VICE 3.10
+        if: steps.cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install build-essential flex bison xa65 dos2unix pkg-config
+          curl -L -o vice.tar.gz https://downloads.sourceforge.net/project/vice-emu/releases/vice-3.10.tar.gz
+          tar xzf vice.tar.gz
+          cd vice-3.10
+          ./configure --prefix=${{ env.VICE_DIR }} --enable-headlessui --disable-html-docs --without-pulse --without-alsa --without-png --without-libcurl
+          make -j 4
+          make install
       - name: Upload test tools
         uses: actions/upload-artifact@v4
         with:
