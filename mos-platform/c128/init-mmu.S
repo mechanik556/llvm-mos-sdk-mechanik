@@ -17,7 +17,9 @@
 ; that never returns to BASIC (the default _Exit loops forever) never uses it
 ; and simply keeps the RAM view.
 
-.bss
+; The startup values are saved before the .bss is zeroed (.init.200), so they
+; must not live in .bss.
+.section .noinit,"aw",@nobits
 __mmusave:
   .fill 1
 __basic_ret:

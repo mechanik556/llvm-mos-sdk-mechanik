@@ -17,7 +17,8 @@
 ; returns to BASIC (the default _Exit loops forever) never uses it and simply
 ; keeps the RAM view.
 
-.bss
+; Saved before the .bss is zeroed (.init.200), so it must not live in .bss.
+.section .noinit,"aw",@nobits
 __basic_ret:
         .fill 2
 
