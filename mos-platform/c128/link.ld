@@ -110,6 +110,12 @@ __c128bank1_data_size = SIZEOF(.c128bank1.data);
 __c128bank1_bss_vma_start = ADDR(.c128bank1.bss);
 __c128bank1_bss_size = SIZEOF(.c128bank1.bss);
 
+/* The rest of bank 1 above the statically placed content, for a run-time
+ * allocator to manage (cache.h): from the end of .c128bank1.bss to where
+ * KERNAL ROM/I-O take over. (16-bit truncation drops the bank tag.) */
+__c128bank1_free_start = (ADDR(.c128bank1.bss) + SIZEOF(.c128bank1.bss)) & 0xFFFF;
+__c128bank1_free_end = (ORIGIN(bank1) + LENGTH(bank1)) & 0xFFFF;
+
 __stack = 0xC000;
 
 OUTPUT_FORMAT {

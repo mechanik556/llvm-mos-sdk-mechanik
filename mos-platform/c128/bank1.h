@@ -118,6 +118,17 @@ extern "C" {
 /// ($0000-$0FFF) is visible from both banks.
 __attribute__((leaf, callback(1))) void c128_bank1_call(void (*method)(void));
 
+/// Copy size bytes from bank 0 (any ordinary memory) to bank-1 RAM at
+/// bank1_dest. Bank-1 addresses are plain integers, never pointers (see the
+/// rules above). Runs with interrupts disabled for each 16-byte chunk and
+/// costs no zero page beyond what bank-1 placement already does.
+void c128_bank1_write(unsigned short bank1_dest, const void *src,
+                      unsigned short size);
+
+/// Copy size bytes from bank-1 RAM at bank1_src to ordinary memory.
+void c128_bank1_read(void *dest, unsigned short bank1_src,
+                     unsigned short size);
+
 #ifdef __cplusplus
 }
 #endif

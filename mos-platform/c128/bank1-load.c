@@ -112,3 +112,30 @@ void __c128bank1_load(void) {
   c128bank1_zero_region(__c128bank1_bss_vma_start,
                         (unsigned short)&__c128bank1_bss_size);
 }
+
+// Run-time copies between bank 0 and bank 1 (declared in bank1.h, which
+// cannot be included when the platform library itself is built), staged through the same
+// Common-RAM scratch buffer (so using them costs no zero page beyond the 16
+// bytes bank-1 placement already costs). The bank-1 side is an address, not a
+// pointer: see bank1.h.
+void c128_bank1_write(unsigned short bank1_dest, const void *src,
+                      unsigned short size) {
+  c128bank1_copy_region((char *)bank1_dest, (const char *)src, size);
+}
+
+void c128_bank1_read(void *dest, unsigned short bank1_src,
+                     unsigned short size) {
+  char *d = (char *)dest;
+  const char *s = (const char *)bank1_src;
+  while (size) {
+    unsigned char chunk =
+        size > C128BANK1_CHUNK ? C128BANK1_CHUNK : (unsigned char)size;
+    // The copy loop is symmetric: with bank 1 mapped, the scratch buffer is
+    // Common RAM and the source address is read from bank 1.
+    __c128bank1_copy_chunk(__c128bank1_scratch, s, chunk);
+    memcpy(d, __c128bank1_scratch, chunk);
+    d += chunk;
+    s += chunk;
+    size -= chunk;
+  }
+}

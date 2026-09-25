@@ -14,6 +14,7 @@ add_vice_test(bank1-call-rs232-area SOURCE bank1-call.c
   RESTORE_RANGE 0c00-0dff
   LINK_OPTIONS -Wl,--defsym=__c128_common_code_origin=0x0C00)
 add_vice_test(bank1-state)
+add_vice_test(bank1-copy)
 add_vice_test(bank1-isolation)
 add_vice_test(bank1-rcr)
 add_vice_test(bank1-malloc)
