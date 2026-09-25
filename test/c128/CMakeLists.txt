@@ -22,6 +22,7 @@ add_vice_test(bank1-malloc-stress)
 add_vice_test(heap-growth)
 add_vice_test(realloc)
 add_vice_test(aligned-alloc)
+add_vice_test(malloc-hook)
 add_vice_test(bank1-large-data)
 add_vice_test(common-code-area)
 

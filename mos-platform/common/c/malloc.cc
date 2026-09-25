@@ -193,6 +193,30 @@ FreeChunk *find_fit(size_t size) {
   return nullptr;
 }
 
+} // namespace
+
+// Optional low-memory hook; see stdlib.h. This default (weak) definition has
+// nothing to give. It is a real function, not an undefined weak reference, so
+// that the compiler sees every callee of the allocator and can lay out its
+// static frames accordingly.
+extern "C" __attribute__((weak)) int __malloc_low_memory(size_t) { return 0; }
+
+namespace {
+
+// find_fit, and if nothing fits, give the hook the chance to free memory, and
+// search again. This is the only place where an allocation can fail, and it
+// fails before any state has been changed, so the hook may call free().
+FreeChunk *find_fit_or_reclaim(size_t size) {
+  for (;;) {
+    FreeChunk *chunk = find_fit(size);
+    if (chunk)
+      return chunk;
+    // A request larger than the whole heap cannot be helped by freeing things.
+    if (size > heap_limit || !__malloc_low_memory(size))
+      return nullptr;
+  }
+}
+
 // Allocate at chunk of size bytes from a free chunk. The pointer returned
 // points to the contents (past the chunk header).
 void *allocate_free_chunk(FreeChunk *free_chunk, size_t size) {
@@ -354,7 +378,7 @@ void *aligned_alloc(size_t alignment, size_t size) {
   if (!initialized)
     init();
 
-  FreeChunk *chunk = find_fit(search);
+  FreeChunk *chunk = find_fit_or_reclaim(search);
   if (!chunk)
     return nullptr;
 
@@ -454,7 +478,7 @@ void *malloc(size_t size) {
   if (!initialized)
     init();
 
-  FreeChunk *chunk = find_fit(size);
+  FreeChunk *chunk = find_fit_or_reclaim(size);
   if (!chunk)
     return nullptr;
 

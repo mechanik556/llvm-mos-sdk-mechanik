@@ -167,6 +167,24 @@ size_t __heap_bytes_used();
    allocations are made.*/
 size_t __heap_bytes_free();
 
+/* Optional low-memory hook. The library provides a default that does nothing;
+ * a program (or a runtime library) may define its own, which is then used
+ * instead. malloc, calloc, realloc, aligned_alloc and operator new call it when
+ * a request cannot be satisfied, instead of failing at once: `needed` is the
+ * size in bytes of the chunk (including its header) that must be found. The
+ * hook may free memory (call free) and returns non-zero if it did, in which
+ * case the allocation is retried, or zero if it has nothing more to give, in
+ * which case the allocation fails as usual (returns NULL). A request larger
+ * than the whole heap does not call the hook.
+ *
+ * The hook runs in the context of whoever called the allocator, so it must not
+ * call malloc, calloc, realloc, aligned_alloc or operator new (or anything that
+ * does), should use little stack, and should not do anything that is unsafe to
+ * do from arbitrary code - in particular no KERNAL or disk I/O, which may
+ * disturb a channel the caller has set up. Without a definition nothing
+ * changes. */
+int __malloc_low_memory(size_t needed);
+
 #ifdef _MOS_SOURCE
 
 #define heap_limit __heap_limit
