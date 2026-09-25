@@ -16,7 +16,7 @@ size_t __get_heap_max_safe_size(void);
 size_t __heap_bytes_free(void);
 
 #define BLOCK 62
-#define MAXBLOCKS 700
+#define MAXBLOCKS 800
 static unsigned char *blk[MAXBLOCKS];
 
 static unsigned int fill_until_null(unsigned int n, unsigned char tag0) {
