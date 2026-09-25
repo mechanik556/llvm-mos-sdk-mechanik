@@ -16,7 +16,8 @@
 MOS_C128_BANK1_DATA static volatile unsigned char bank1_initial = 0x99;
 MOS_C128_BANK1_DATA static volatile unsigned char bank1_value;
 
-static volatile unsigned char __attribute__((section(".zp.bss"))) result_initial;
+static volatile unsigned char
+    __attribute__((section(".zp.bss"))) result_initial;
 static volatile unsigned char __attribute__((section(".zp.bss"))) result_after;
 
 MOS_C128_BANK1_CODE static void read_initial(void) {
@@ -27,13 +28,12 @@ MOS_C128_BANK1_CODE static void set_value(void) {
   bank1_value = bank1_initial + 1;
 }
 
-MOS_C128_BANK1_CODE static void read_value(void) {
-  result_after = bank1_value;
-}
+MOS_C128_BANK1_CODE static void read_value(void) { result_after = bank1_value; }
 
 int main(void) {
   c128_bank1_call(read_initial);
   c128_bank1_call(set_value);
   c128_bank1_call(read_value);
-  return (result_initial == 0x99 && result_after == 0x9A) ? EXIT_SUCCESS : EXIT_FAILURE;
+  return (result_initial == 0x99 && result_after == 0x9A) ? EXIT_SUCCESS
+                                                          : EXIT_FAILURE;
 }

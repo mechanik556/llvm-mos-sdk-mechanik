@@ -78,30 +78,30 @@
 #define _C128_BANK1_H
 
 #if !defined(__C128__)
-#  error This module may only be used when compiling for the C128!
+#error This module may only be used when compiling for the C128!
 #endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-// Switch to RAM bank 1 (KERNAL ROM/I-O stay mapped in), call method, then
-// switch back to whatever bank was mapped before the call. Interrupts are
-// disabled for the duration of the switched-away call.
-//
-// method must itself be placed in bank 1 via MOS_C128_BANK1_CODE. A function
-// in ordinary bank-0 memory is not reachable once bank 1 is mapped - the CPU
-// would run whatever bank 1 holds at that address. Only code in Common RAM
-// ($0000-$0FFF) is visible from both banks.
+/// Switch to RAM bank 1 (KERNAL ROM/I-O stay mapped in), call method, then
+/// switch back to whatever bank was mapped before the call. Interrupts are
+/// disabled for the duration of the switched-away call.
+///
+/// method must itself be placed in bank 1 via MOS_C128_BANK1_CODE. A function
+/// in ordinary bank-0 memory is not reachable once bank 1 is mapped - the CPU
+/// would run whatever bank 1 holds at that address. Only code in Common RAM
+/// ($0000-$0FFF) is visible from both banks.
 __attribute__((leaf, callback(1))) void c128_bank1_call(void (*method)(void));
 
 #ifdef __cplusplus
 }
 #endif
 
-// Place a function or global in bank 1, reachable via c128_bank1_call
-// (for functions) or a bank-1-placed accessor function (for data - see
-// this header's own top comment).
+/// Place a function or global in bank 1, reachable via c128_bank1_call
+/// (for functions) or a bank-1-placed accessor function (for data - see
+/// this header's own top comment).
 #define MOS_C128_BANK1_CODE __attribute__((section(".c128bank1.text")))
 #define MOS_C128_BANK1_DATA __attribute__((section(".c128bank1.data")))
 

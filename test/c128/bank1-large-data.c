@@ -24,7 +24,8 @@ static volatile unsigned char ZP r_first, r_last;
 
 MOS_C128_BANK1_CODE static void sum_table(void) {
   unsigned int i, s = 0;
-  for (i = 0; i < TABLE_SIZE; i++) s += bank1_table[i];
+  for (i = 0; i < TABLE_SIZE; i++)
+    s += bank1_table[i];
   r_sum = s;
   r_first = bank1_table[0];
   r_last = bank1_table[TABLE_SIZE - 1];
@@ -32,7 +33,10 @@ MOS_C128_BANK1_CODE static void sum_table(void) {
 
 int main(void) {
   unsigned int i, expect = 0;
-  for (i = 0; i < TABLE_SIZE; i++) expect += (unsigned char)(i * 7 + 3);
+  for (i = 0; i < TABLE_SIZE; i++)
+    expect += (unsigned char)(i * 7 + 3);
   c128_bank1_call(sum_table);
-  return (r_sum == expect && r_first == E1(0) && r_last == E1(TABLE_SIZE - 1)) ? EXIT_SUCCESS : EXIT_FAILURE;
+  return (r_sum == expect && r_first == E1(0) && r_last == E1(TABLE_SIZE - 1))
+             ? EXIT_SUCCESS
+             : EXIT_FAILURE;
 }

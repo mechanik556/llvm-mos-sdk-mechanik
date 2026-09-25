@@ -25,5 +25,6 @@ int main(void) {
   uint8_t rcr;
   c128_bank1_call(touch);
   rcr = *(volatile uint8_t *)0xD506;
-  return ((rcr & 0xC8) == 0x40 && (rcr & 0x07) == 0x05) ? EXIT_SUCCESS : EXIT_FAILURE;
+  return ((rcr & 0xC8) == 0x40 && (rcr & 0x07) == 0x05) ? EXIT_SUCCESS
+                                                        : EXIT_FAILURE;
 }

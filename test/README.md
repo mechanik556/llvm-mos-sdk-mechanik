@@ -81,4 +81,3 @@ it and again after the exit handlers, and the two must be identical.
 Run `vice-runner.py` directly for one program (`--vice`, `--prg`, `--map`; the
 map is written by `-Wl,-Map=`); its exit status is 0 for pass, 1 for fail and 2
 for no result.
-

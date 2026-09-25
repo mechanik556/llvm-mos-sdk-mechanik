@@ -1,3 +1,8 @@
+// Copyright 2026 LLVM-MOS Project
+// Licensed under the Apache License, Version 2.0 with LLVM Exceptions.
+// See https://github.com/llvm-mos/llvm-mos-sdk/blob/main/LICENSE for license
+// information.
+
 #include <string.h>
 
 // Populates statically-placed bank-1 content (MOS_C128_BANK1_CODE/_DATA,
@@ -59,13 +64,16 @@ void __c128bank1_restore_common_code(void) {
 // Staging buffer for the chunked copy. It must be Common RAM, and zero page is
 // the only ordinary variable storage that is: this costs C128BANK1_CHUNK bytes
 // of the (scarce) zero-page pool in every program that uses bank 1.
-static char __attribute__((section(".zp.bss"))) __c128bank1_scratch[C128BANK1_CHUNK];
+static char
+    __attribute__((section(".zp.bss"))) __c128bank1_scratch[C128BANK1_CHUNK];
 
 // Copy size bytes from bank-0-visible lma into bank-1 RAM at vma, staged
 // through the Common-RAM scratch buffer.
-static void c128bank1_copy_region(char *vma, const char *lma, unsigned short size) {
+static void c128bank1_copy_region(char *vma, const char *lma,
+                                  unsigned short size) {
   while (size) {
-    unsigned char chunk = size > C128BANK1_CHUNK ? C128BANK1_CHUNK : (unsigned char)size;
+    unsigned char chunk =
+        size > C128BANK1_CHUNK ? C128BANK1_CHUNK : (unsigned char)size;
     memcpy(__c128bank1_scratch, lma, chunk);
     __c128bank1_copy_chunk(vma, __c128bank1_scratch, chunk);
     vma += chunk;
@@ -77,7 +85,8 @@ static void c128bank1_copy_region(char *vma, const char *lma, unsigned short siz
 static void c128bank1_zero_region(char *vma, unsigned short size) {
   memset(__c128bank1_scratch, 0, C128BANK1_CHUNK);
   while (size) {
-    unsigned char chunk = size > C128BANK1_CHUNK ? C128BANK1_CHUNK : (unsigned char)size;
+    unsigned char chunk =
+        size > C128BANK1_CHUNK ? C128BANK1_CHUNK : (unsigned char)size;
     __c128bank1_copy_chunk(vma, __c128bank1_scratch, chunk);
     vma += chunk;
     size -= chunk;

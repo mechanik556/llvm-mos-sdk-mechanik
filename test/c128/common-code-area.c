@@ -21,7 +21,8 @@ static unsigned int checksum(void) {
   const volatile unsigned char *p = (const volatile unsigned char *)0x0840;
   unsigned int s = 0;
   unsigned int i;
-  for (i = 0; i < 0x1C0; i++) s = s * 31 + p[i];
+  for (i = 0; i < 0x1C0; i++)
+    s = s * 31 + p[i];
   return s;
 }
 
@@ -32,7 +33,8 @@ int main(void) {
   before = checksum();
   c128_bank1_call(touch);
   for (i = 0; i < 40; i++) {
-    for (j = 0; text[j]; j++) cbm_k_chrout(text[j]);
+    for (j = 0; text[j]; j++)
+      cbm_k_chrout(text[j]);
     cbm_k_chrout('0' + i / 10);
     cbm_k_chrout('0' + i % 10);
     cbm_k_chrout('\r');

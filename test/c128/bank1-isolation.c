@@ -22,8 +22,10 @@ MOS_C128_BANK1_CODE static void poke(void) {
 MOS_C128_BANK1_CODE static void local(void) {
   volatile uint8_t buf[6];
   uint8_t i, s = 0;
-  for (i = 0; i < 6; i++) buf[i] = i + 1;
-  for (i = 0; i < 6; i++) s += buf[i];
+  for (i = 0; i < 6; i++)
+    buf[i] = i + 1;
+  for (i = 0; i < 6; i++)
+    s += buf[i];
   r_local = s;
 }
 
@@ -32,5 +34,6 @@ int main(void) {
   c128_bank1_call(poke);
   g0_after = g0;
   c128_bank1_call(local);
-  return (r_read1 == 0x22 && g0_after == 0x11 && r_local == 21) ? EXIT_SUCCESS : EXIT_FAILURE;
+  return (r_read1 == 0x22 && g0_after == 0x11 && r_local == 21) ? EXIT_SUCCESS
+                                                                : EXIT_FAILURE;
 }
