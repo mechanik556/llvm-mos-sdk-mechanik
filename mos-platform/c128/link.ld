@@ -27,7 +27,10 @@ MEMORY {
      * (chr_rom) and GEOS VLIR overlay scripts use: the CPU only sees the low
      * 16 bits, but lld's overlap check works on full VMAs, and without the
      * tag any bank-1 content beyond $1C00 looks like it collides with the
-     * bank-0 program that starts at $1C01. */
+     * bank-0 program that starts at $1C01.
+     *
+     * This memory is not part of the malloc heap and cannot be: see bank1.h
+     * for why bank-1 memory is only reachable through explicit accessors. */
     bank1 (rw) : ORIGIN = 0x10000 + 0x1000, LENGTH = 0xB000
     /* Common-RAM-resident code: anything that executes the actual MMU_CR
      * bank switch (c128_bank1_call, __c128bank1_copy_chunk, bank1.s) must

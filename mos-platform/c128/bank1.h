@@ -28,6 +28,29 @@
 //   function placed with MOS_C128_BANK1_CODE and invoke it via
 //   c128_bank1_call; never pass or return raw pointers to bank-1 data.
 //
+// * Bank 1 is not part of the C heap, and cannot be made to look like it.
+//   malloc/free/new/delete hand out ordinary bank-0 memory. No change to them
+//   could return bank-1 memory transparently:
+//   - A pointer is a flat 16-bit address and does not say which bank it
+//     refers to; the same value reads different memory once bank 1 is mapped
+//     (see test/c128/bank1-isolation.c).
+//   - The only way to touch bank 1 is code that is visible in both banks
+//     (Common RAM) running with interrupts off: about 105 cycles to read one
+//     byte through c128_bank1_call, against about 4 for an ordinary load
+//     (measured under VICE).
+//   - At a given dereference the compiler cannot know whether a pointer
+//     refers to bank-1 memory. C and C++ let pointers be converted (void *,
+//     char *, uintptr_t, unions), copied as raw bytes, stored inside other
+//     objects, compared, handed to prebuilt library code, and dereferenced
+//     arbitrarily later. Every access through a pointer that might be a
+//     bank-1 pointer would need a run-time check and a gate.
+//   - Wide ("far") pointers or a bank-qualified address space would change
+//     the ABI and every library, and still cost a gated call per access.
+//   So bank-1 data is reached through accessor functions, as above. A
+//   bank-aware allocator would have to be a separate, explicit API returning
+//   a handle that yields a pointer only while locked, never a pointer that
+//   stays valid forever.
+//
 // * Pass values through Common RAM. c128_bank1_call takes no arguments for
 //   the callee and returns nothing (registers are not preserved across the
 //   switch-back). Exchange data via zero-page variables

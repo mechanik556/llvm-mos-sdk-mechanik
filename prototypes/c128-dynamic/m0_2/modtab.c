@@ -366,6 +366,26 @@ uint8_t mod_load(uint8_t id) {
 }
 
 // ---- Cacheable heap objects (design 4.1d) -------------------------------
+// WHY THIS IS A SEPARATE, HANDLE-BASED API AND NOT malloc/new (full argument:
+// work/M0_C128_BANKING_PLAN.md section 11.10):
+//  - A pointer does not carry a bank, and bank-1 memory can only be touched by
+//    Common-RAM code with interrupts off (~105 cycles per byte, measured by
+//    prototypes/c128-dynamic/access_cost.sh, vs ~4 for a load), so ordinary
+//    pointer dereferences cannot reach it.
+//  - The compiler cannot tell at a dereference which pointers are bank-1 or
+//    cacheable pointers (casts through void*/char*/uintptr_t, pointers copied as
+//    bytes or stored in other objects, prebuilt libc, arbitrarily late use), so
+//    "insert the gate/lock automatically" is not implementable for C/C++.
+//  - malloc promises a pointer that stays valid and unmoved until free(), which
+//    forbids what this heap does: migrating an object into its caller's bank,
+//    spilling it to the other bank, defragmenting, and (later) evicting it to
+//    REU/disk. A handle is never a pointer, so the runtime is free to move the
+//    bytes; mos_handle_lock yields a pointer valid only until the matching
+//    unlock.
+//  - operator new/delete are thin wrappers over malloc/free returning T*; the
+//    constructor, methods and vtable dispatch that follow are ordinary bank-0
+//    code that dereferences `this`, so they cannot be redirected either.
+// Ordinary malloc/free/new/delete are untouched: bank-0-only, zero cost.
 // Handles are small integers (index+1; 0 = null). Objects share the module
 // pools. DESIGN CORRECTION vs 11.6 pts 2-3: mos_handle_lock cannot switch
 // $FF00 and hand back a bank-1 pointer - the caller's own code (ordinary
