@@ -89,7 +89,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-tools
-          path: ${{env.TEST_TOOLS_DIR }}
+          # Not VICE: its install includes the Commodore ROM images, which are
+          # not ours to republish in a public artifact. The package job gets VICE
+          # from the cache above, which keeps the whole directory.
+          path: |
+            ${{ env.TEST_TOOLS_DIR }}
+            !${{ env.TEST_TOOLS_DIR }}/vice/**
 
   package:
     runs-on: ${{ matrix.os }}
