@@ -11,6 +11,7 @@ set(VICE_LIBRETRO_CORE ${LIBRETRO_VICE_X64SC_CORE})
 # reappears, $A000 and up): finishes and reports, and hands control back to
 # BASIC.
 add_vice_test(exit-large)
+add_vice_test(heap-growth)
 add_vice_test(realloc)
 add_vice_test(aligned-alloc)
 add_vice_basic_return_test(basic-return)
