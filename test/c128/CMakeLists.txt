@@ -16,6 +16,7 @@ add_vice_test(bank1-call-rs232-area SOURCE bank1-call.c
 add_vice_test(bank1-state)
 add_vice_test(bank1-isolation)
 add_vice_test(bank1-rcr)
+add_vice_test(bank1-malloc)
 add_vice_test(bank1-large-data)
 add_vice_test(common-code-area)
 

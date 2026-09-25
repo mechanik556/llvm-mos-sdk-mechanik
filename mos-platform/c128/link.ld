@@ -73,6 +73,12 @@ INPUT(init-mmu.o)
  * loaded into ram alongside everything else (LMA), since ordinary PRG
  * loading only ever populates one bank - bank1-load.c copies it into
  * bank1 at startup. */
+/* These sections take space in `ram` (as load images, or as the save buffer
+ * below), so they must come BEFORE .bss and .noinit: malloc's arena starts at
+ * __heap_start, the end of .noinit, so anything placed after it lies inside the
+ * arena and gets handed out by malloc. The save buffer is live until exit. Being
+ * before the NOLOAD sections also keeps the PRG file free of zero padding for
+ * them. INSERT puts the whole block right after .data. */
 SECTIONS {
     .c128bank1.text : { *(.c128bank1.text) } >bank1 AT>ram
     .c128bank1.data : { *(.c128bank1.data) } >bank1 AT>ram
@@ -82,6 +88,11 @@ SECTIONS {
      * runtime, saved at startup and restored at exit (bank1-load.c). */
     .c128commoncode_save (NOLOAD) : { . += SIZEOF(.c128commoncode); } >ram
 }
+INSERT AFTER .data;
+
+/* Guard the rule above: nothing of ours in `ram` may reach malloc's arena. */
+ASSERT(ADDR(.c128commoncode_save) + SIZEOF(.c128commoncode_save) <= __heap_start,
+       "c128: bank-1 support data lies inside the malloc arena (must be below __heap_start)")
 
 __c128commoncode_vma_start = ADDR(.c128commoncode);
 __c128commoncode_lma_start = LOADADDR(.c128commoncode);
