@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.18)
 
-project(test-c64 LANGUAGES C)
+project(test-c64 LANGUAGES C CXX)
 
 include(../test.cmake)
 
@@ -15,5 +15,6 @@ add_vice_test(heap-growth)
 add_vice_test(realloc)
 add_vice_test(aligned-alloc)
 add_vice_test(malloc-hook)
+add_vice_test(cxx-new-delete SOURCE cxx-new-delete.cc)
 add_vice_basic_return_test(basic-return)
 add_vice_basic_return_test(basic-return-large)
