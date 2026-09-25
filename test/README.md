@@ -71,6 +71,7 @@ the Common-RAM restore check needs the monitor breakpoints of `vice-runner.py`.
   add_vice_test(<name> SOURCE other.c   # same source, different link options
     LINK_OPTIONS -Wl,--defsym=...
     RESTORE_RANGE 0c00-0dff)            # Common-RAM code area (see below)
+  add_vice_test(<name> EXTRA_SOURCES more.s)   # further sources (e.g. assembly)
 ```
 
 When a program links the C128 bank-1 support (`bank1.h`), the runner also
