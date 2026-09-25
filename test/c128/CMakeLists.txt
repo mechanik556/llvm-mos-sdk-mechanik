@@ -17,6 +17,8 @@ add_vice_test(bank1-state)
 add_vice_test(bank1-isolation)
 add_vice_test(bank1-rcr)
 add_vice_test(bank1-malloc)
+add_vice_test(realloc)
+add_vice_test(aligned-alloc)
 add_vice_test(bank1-large-data)
 add_vice_test(common-code-area)
 

@@ -339,50 +339,48 @@ void *aligned_alloc(size_t alignment, size_t size) {
   if (!size)
     return nullptr;
 
-  // The region before the aligned chunk needs to be large enough to fit a freereallocated chunk should not be free");
-  // chunk.
-  if (__builtin_add_overflow(size, MIN_CHUNK_SIZE, &size))
+  // The chunk that is found may have to be split in two so that the payload of
+  // the allocated part lands on an aligned address. The piece in front stays
+  // free, so it must be big enough to be a free chunk of its own
+  // (MIN_CHUNK_SIZE), and a payload begins sizeof(Chunk) after its chunk starts.
+  // Up to alignment-1 further bytes may be needed to reach the alignment.
+  size_t search = size;
+  if (__builtin_add_overflow(search, MIN_CHUNK_SIZE + sizeof(Chunk), &search))
     return nullptr;
-
-  // Up to alignment-1 additional bytes may be needed to align the chunk start.
-  if (__builtin_add_overflow(size, alignment - 1, &size))
+  if (__builtin_add_overflow(search, alignment - 1, &search))
     return nullptr;
 
   if (!initialized)
     init();
 
-  FreeChunk *chunk = find_fit(size);
+  FreeChunk *chunk = find_fit(search);
   if (!chunk)
     return nullptr;
 
-  void *aligned_ptr = (char *)chunk + MIN_CHUNK_SIZE;
-  TRACE("Initial alignment point: %p\n", aligned_ptr);
+  // The chunk is about to be split and re-inserted as pieces: take it off the
+  // free list first.
+  chunk->remove();
 
-  // alignment is a power of two, so alignment-1 is a mask that selects the
-  // misaligned bits.
-  size_t past_alignment = (uintptr_t)aligned_ptr & (alignment - 1);
-  if (past_alignment) {
-    TRACE("%u bytes past aligned point.\n", past_alignment);
-    aligned_ptr = (void *)((uintptr_t)aligned_ptr & ~(alignment - 1));
-    TRACE("Moved pointer backwards to aligned point %p.\n", aligned_ptr);
-    aligned_ptr = (char *)aligned_ptr + alignment;
-    TRACE("Moved pointer one alignment unit forwards to %p.\n", aligned_ptr);
-  }
+  // The earliest payload address that leaves a chunk-sized gap in front,
+  // rounded up to the alignment (a power of two).
+  uintptr_t payload = (uintptr_t)chunk + MIN_CHUNK_SIZE + sizeof(Chunk);
+  payload = (payload + alignment - 1) & ~(uintptr_t)(alignment - 1);
+  TRACE("Aligned payload: %p\n", (void *)payload);
 
   size_t chunk_size = chunk->size();
-
-  auto *aligned_chunk_begin = (Chunk *)((char *)aligned_ptr - sizeof(Chunk));
-  size_t prev_chunk_size = (char *)aligned_chunk_begin - (char *)chunk;
+  auto *aligned_chunk_begin = (Chunk *)(payload - sizeof(Chunk));
+  size_t front_size = (char *)aligned_chunk_begin - (char *)chunk;
 
   TRACE("Inserting free chunk before aligned.\n");
-  FreeChunk::insert(chunk, prev_chunk_size); // prev_free remains unchanged.
+  FreeChunk::insert(chunk, front_size); // prev_free remains unchanged.
 
   TRACE("Temporarily inserting aligned free chunk.\n");
   FreeChunk *aligned_chunk =
-      FreeChunk::insert(aligned_chunk_begin, chunk_size - prev_chunk_size);
+      FreeChunk::insert(aligned_chunk_begin, chunk_size - front_size);
   aligned_chunk->prev_free = true;
 
   TRACE("Allocating from aligned free chunk.\n");
+  // `size` is still the chunk size the caller needs, not the search size.
   return allocate_free_chunk(aligned_chunk, size);
 }
 
@@ -482,12 +480,12 @@ void *realloc(void *ptr, size_t size) {
   TRACE("Old size: %u\n", old_size);
 
   if (size < old_size) {
-    size_t shrink = size - old_size;
+    size_t shrink = old_size - size;
     TRACE("Shrinking by %u\n", shrink);
     Chunk *next = chunk->next();
-    chunk->set_size(size);
 
     if (next && next->free()) {
+      chunk->set_size(size);
       size_t next_size = next->size();
       TRACE("Next free chunk %p size %u\n", next, next_size);
       // Coalesce.
@@ -496,12 +494,15 @@ void *realloc(void *ptr, size_t size) {
       return ptr;
     }
 
-    // Insert a new free chunk for the shrink if possible.
+    // Insert a new free chunk for the shrink if possible. If the remainder is
+    // too small to be a chunk of its own, the block keeps its current size:
+    // shrinking it would leave the tail unaccounted for and break the heap walk.
     if (shrink < MIN_CHUNK_SIZE) {
       TRACE("Remainder too small.");
       return ptr;
     }
 
+    chunk->set_size(size);
     FreeChunk *after = FreeChunk::insert(chunk->end(), shrink);
     TRACE("Allocated remainder %p of size %u\n", after, after->size());
     after->prev_free = false;
