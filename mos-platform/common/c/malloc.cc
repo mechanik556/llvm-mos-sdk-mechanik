@@ -342,8 +342,9 @@ void *aligned_alloc(size_t alignment, size_t size) {
   // The chunk that is found may have to be split in two so that the payload of
   // the allocated part lands on an aligned address. The piece in front stays
   // free, so it must be big enough to be a free chunk of its own
-  // (MIN_CHUNK_SIZE), and a payload begins sizeof(Chunk) after its chunk starts.
-  // Up to alignment-1 further bytes may be needed to reach the alignment.
+  // (MIN_CHUNK_SIZE), and a payload begins sizeof(Chunk) after its chunk
+  // starts. Up to alignment-1 further bytes may be needed to reach the
+  // alignment.
   size_t search = size;
   if (__builtin_add_overflow(search, MIN_CHUNK_SIZE + sizeof(Chunk), &search))
     return nullptr;
@@ -496,7 +497,8 @@ void *realloc(void *ptr, size_t size) {
 
     // Insert a new free chunk for the shrink if possible. If the remainder is
     // too small to be a chunk of its own, the block keeps its current size:
-    // shrinking it would leave the tail unaccounted for and break the heap walk.
+    // shrinking it would leave the tail unaccounted for and break the heap
+    // walk.
     if (shrink < MIN_CHUNK_SIZE) {
       TRACE("Remainder too small.");
       return ptr;
