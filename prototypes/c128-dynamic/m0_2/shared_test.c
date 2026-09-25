@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include "compat.h"
 
 /* Shared mode: bank 0's pool is a block of the ordinary malloc heap, and the
  * two heaps collaborate (design 11.11). Flags are dumped from VICE; every
@@ -12,8 +13,6 @@ uint8_t mos_cacheable_free(mos_handle_t h);
 void *mos_handle_lock(mos_handle_t h);
 void mos_handle_unlock(mos_handle_t h);
 uint8_t obj_bank(mos_handle_t h), pool_free_units(uint8_t bank);
-uint8_t pool0_size(void);
-uint16_t pool0_base(void);
 uint8_t mos_cache_shared(uint8_t min_units, uint8_t init_units, uint8_t max_units, uint16_t low, uint16_t high);
 uint8_t mos_cache_service(void);
 void mod_init(void);
@@ -21,7 +20,6 @@ unsigned char m_add1(unsigned char), m_r_call_sm(void), m_r_sm_to_b(void), m_r_e
     m_r_viaptr(unsigned char), m_r_lohi(unsigned char);
 size_t __set_heap_limit(size_t limit);
 size_t __heap_bytes_free(void);
-extern volatile uint8_t sh_grows, sh_moves, sh_hook_calls, sh_yielded, mod_evictions, obj_spills, defrag_moves;
 extern volatile uint16_t mt_addr[10];
 extern volatile uint8_t mt_cr[10];
 
@@ -96,7 +94,7 @@ int main(void) {
 
   __set_heap_limit(1200);
   free(malloc(1));                                           /* initialize the heap: only then is its free space known */
-  mod_init();
+  mod_init_shared();
   F0 = __heap_bytes_free();
   en = mos_cache_shared(MIN, INIT, MAX, LOW, HIGH);
   cost_init = F0 - __heap_bytes_free();                      /* the pool block's cost */

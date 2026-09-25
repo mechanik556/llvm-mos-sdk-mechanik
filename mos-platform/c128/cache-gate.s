@@ -3,15 +3,15 @@
 ; See https://github.com/llvm-mos/llvm-mos-sdk/blob/main/LICENSE for license
 ; information.
 
-; Bank-aware call_gate / exit_gate for relocatable code modules (cache.h), with a
-; load-on-miss path. Linked only by programs that reference call_gate.
+; Bank-aware __mos_call_gate / exit_gate for relocatable code modules (cache.h), with a
+; load-on-miss path. Linked only by programs that reference __mos_call_gate.
 ; See work/M0_C128_BANKING_PLAN.md (llvm-mos-mechanik) for the design.
 ; with a load-on-miss path. See work/M0_C128_BANKING_PLAN.md (llvm-mos-mechanik).
 ;
-; A cross-module call site is:   jsr call_gate
+; A cross-module call site is:   jsr __mos_call_gate
 ;                                .byte module_id
 ;                                .word offset_in_module
-; call_gate dispatches to module_id's resident address + offset, loading the
+; __mos_call_gate dispatches to module_id's resident address + offset, loading the
 ; module first if it is not resident (mos_cache_module_load, cache.c), switching RAM bank
 ; if needed, and plants a frame so the callee's RTS lands in exit_gate, which
 ; does the bookkeeping and returns to the call site.
@@ -39,14 +39,14 @@ AMS_MAX = 16
 
 ; Zero-page pool is small (~100 bytes shared with the compiler), so gate
 ; temporaries that are never live at the same time share bytes.
-.zeropage gt_a, gt_x, gt_y, gt_i, gt_cr, gt_mod, gt_off, gt_ptr, gt_tgt, __mos_gate_ams_top
-.globl __mos_gate_ams_top
+.zeropage gt_a, gt_x, gt_y, gt_i, __mos_gate_cr, gt_mod, gt_off, gt_ptr, gt_tgt, __mos_gate_ams_top
+.globl __mos_gate_ams_top, __mos_gate_cr
 .section .zp.bss,"aw",@nobits
 gt_a:   .fill 1
 gt_x:   .fill 1
 gt_y:   .fill 1
 gt_i:   .fill 1
-gt_cr:  .fill 1
+__mos_gate_cr:  .fill 1
 gt_mod: .fill 1
 gt_off: .fill 2
 gt_ptr: .fill 2
@@ -65,8 +65,8 @@ ams:     .fill AMS_MAX
 rc_save: .fill 18
 
 .section .c128commoncode.gate,"ax",@progbits
-.globl call_gate
-call_gate:
+.globl __mos_call_gate
+__mos_call_gate:
 	sta gt_a
 	stx gt_x
 	sty gt_y
@@ -89,7 +89,7 @@ call_gate:
 	lda (gt_ptr),y
 	sta gt_off+1
 	lda MMU_CR
-	sta gt_cr
+	sta __mos_gate_cr
 	lda #MMU_CFG_RAM0_KERNAL
 	sta MMU_CR
 	clc
@@ -140,7 +140,7 @@ call_gate:
 	inc __mos_gate_ams_top
 	lda gt_i
 	pha
-	lda gt_cr
+	lda __mos_gate_cr
 	pha
 	lda #mos16hi(exit_gate-1)
 	pha
@@ -157,7 +157,7 @@ call_gate:
 	jmp (gt_tgt)
 .Lfail:                  ; A = error code; only resume-1 is on the stack
 	sta gt_a
-	lda gt_cr
+	lda __mos_gate_cr
 	sta MMU_CR
 	lda gt_i
 	ora #$01             ; carry set, I as the caller had it
@@ -182,14 +182,14 @@ exit_gate:
 	ldx ams,y
 	dec __mos_mt_active,x
 	pla
-	sta gt_cr
+	sta __mos_gate_cr
 	pla
 	sta gt_i
 	lda ex_p
 	and #$FB
 	ora gt_i
 	sta ex_p
-	lda gt_cr
+	lda __mos_gate_cr
 	sta MMU_CR
 	lda ex_p
 	pha
@@ -210,7 +210,7 @@ load_module:
 	inx
 	cpx #18
 	bne 1b
-	lda gt_cr            ; caller's bank: which one to prefer
+	lda __mos_gate_cr            ; caller's bank: which one to prefer
 	and #$40
 	beq 3f
 	ldx #1

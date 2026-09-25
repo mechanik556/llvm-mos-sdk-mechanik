@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stdio.h>
+#include "compat.h"
 
 /* M0.2 edge-case test: (1) a pinned module blocks a load that would need its
  * space, (2) CLOCK victim selection prefers a cold module over a hot one even
@@ -14,7 +15,6 @@ void mod_clear_refs(void);
 unsigned char m_double(unsigned char), m_cb(unsigned char), m_f_add7(unsigned char), m_r_call_sm(void), m_calld(unsigned char);
 uint16_t m_r_try_big(void);
 extern volatile uint16_t mt_addr[10];
-extern volatile uint8_t place_refused;
 extern volatile uint8_t mt_cr[10], mt_active[10], evict_log[16], evict_n, ams_top;
 
 static volatile uint8_t ev_before_big, ev_delta_big, cd_alive, refused_before, refused_delta;

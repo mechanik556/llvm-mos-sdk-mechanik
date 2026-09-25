@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stdio.h>
+#include "compat.h"
 
 /* Object spilling / out-of-memory test. No modules are involved, so any
  * eviction count > 0 would be a bug. Expected values in comments. */
@@ -11,7 +12,6 @@ void *mos_handle_lock(mos_handle_t h);
 void mos_handle_unlock(mos_handle_t h);
 uint8_t obj_bank(mos_handle_t h), pool_free_units(uint8_t bank);
 void mod_init(void);
-extern volatile uint8_t obj_spills, mod_evictions;
 
 static volatile uint8_t f0_full;                         /* 0: five 1-unit objects fill bank 0 */
 static volatile uint8_t big_bank0, big_bank1;            /* 1 (bank 0 was full), then 0 after lock */

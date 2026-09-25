@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stdio.h>
+#include "compat.h"
 
 /* Defragmentation test. Expected values in comments. */
 
@@ -13,7 +14,6 @@ uint8_t mos_defrag(void), mod_evict(uint8_t id);
 void mod_init(void);
 unsigned char m_r_call_sm(void), m_r_sm_to_b(void), m_r_entry(unsigned char), m_r_viaptr(unsigned char), m_r_lohi(unsigned char);
 unsigned char m_r_try_defrag(void);
-extern volatile uint8_t defrag_moves, mod_evictions, obj_spills;
 extern volatile uint16_t mt_addr[10];
 
 /* Phase B: module relocation during defragmentation */

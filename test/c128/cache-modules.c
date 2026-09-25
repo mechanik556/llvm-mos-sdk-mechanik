@@ -16,7 +16,8 @@
 
 unsigned char m_add1(unsigned char), m_cb(unsigned char), m_add7(unsigned char),
     m_r_entry(unsigned char), m_r_viaptr(unsigned char),
-    m_r_lohi(unsigned char), m_r_call_sm(void), m_r_sm_to_b(void);
+    m_r_lohi(unsigned char), m_r_call_sm(void), m_r_sm_to_b(void),
+    m_r_try_evict(void), m_g_incr(unsigned char);
 extern uint16_t __mos_mt_addr[];
 extern uint8_t __mos_mt_cr[];
 extern volatile uint8_t __mos_mt_active[];
@@ -33,6 +34,7 @@ int main(void) {
   unsigned char *p;
 
   CHECK(mos_cache_static(pool0, 5) == 0);
+  mos_cache_set_host(5); /* the runtime's jump table, for module code */
 
   /* load on first call */
   CHECK(!(__mos_mt_addr[0] >> 8));
@@ -64,6 +66,17 @@ int main(void) {
   CHECK(__mos_mt_addr[2] != r_at || __mos_mt_cr[2] == 0x4E ||
         mos_cache_stats.mod_evictions >= 1);
   mos_handle_unlock(h);
+
+  /* host services: module code locks an object (which comes to the module's
+   * bank), changes it and unlocks it; a module cannot evict itself while it is
+   * active (the host refuses: pinned) */
+  CHECK(m_g_incr((unsigned char)h) == 0);
+  CHECK(mos_handle_locks(h) == 0);
+  p = mos_handle_lock(h);
+  CHECK(p && p[0] == 2);
+  mos_handle_unlock(h);
+  CHECK(m_r_try_evict() == 1);
+  CHECK(__mos_mt_addr[2] >> 8); /* R is still resident */
 
   /* defragmentation keeps modules working (they are relocated by the move) */
   (void)mos_defrag();

@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stdio.h>
+#include "compat.h"
 
 /* Gate cost measurement (hit path only: every module is loaded before timing).
  * Each case runs REPS calls between a CIA2 timer A start and stop, with
@@ -18,7 +19,6 @@ unsigned char m_calld(unsigned char);   /* bank 0 -> C(bank 1) -> D(bank 1): two
 void mod_init(void);
 uint8_t mod_evict(uint8_t);
 extern volatile uint8_t mt_cr[];
-extern volatile uint8_t mod_loads;
 
 #define REPS 16
 #define CIA2_TA_LO (*(volatile uint8_t *)0xDD04)

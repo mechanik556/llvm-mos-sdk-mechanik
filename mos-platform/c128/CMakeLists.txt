@@ -36,6 +36,8 @@ add_platform_library(c128-c
   bank1-load.c
   cache.c
   cache-gate.s
+  cache-host.c
+  cache-host.s
 )
 target_include_directories(c128-c BEFORE PUBLIC .)
 target_include_directories(c128-c BEFORE PUBLIC ../c64)

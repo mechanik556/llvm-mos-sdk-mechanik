@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include "compat.h"
 
 /* M0.2.4 test: cacheable heap objects with caller-bank locking. Results are
  * globals dumped from VICE (expected values in comments). */
@@ -15,7 +16,6 @@ void mod_init(void);
 unsigned char m_double(unsigned char), m_cb(unsigned char);
 uint8_t m_g_incr(mos_handle_t h);
 uint16_t m_g_sum(mos_handle_t h);
-extern volatile uint8_t mod_evictions, ams_top;
 extern volatile uint8_t mt_cr[10], mt_active[10];
 
 static volatile uint8_t r_m1, r_m2, f0_after_mods;          /* 4 10x: 1, 1 */

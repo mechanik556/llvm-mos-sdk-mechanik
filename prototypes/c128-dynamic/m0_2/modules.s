@@ -14,7 +14,7 @@
 .include "imag.inc"
 
 .macro CALL id, off
-	jsr call_gate
+	jsr __mos_call_gate
 	.byte \id
 	.word \off
 .endm
@@ -286,18 +286,36 @@ r_info:
 ; Module 4's size is deliberately larger than both pools; its image is never
 ; copied. Module 6 is the static host (no image).
 	.section .rodata.mt,"a",@progbits
-.globl mt_img, mt_size, mt_reloc
+.globl __mos_mt_count, __mos_mt_img, __mos_mt_size, __mos_mt_reloc
+.globl mt_img, mt_size
+__mos_mt_count: .byte 10
+__mos_mt_img:
 mt_img:   .word modA_start, modB_start, modC_start, modD_start, modA_start
           .word modR_start, 0, modF_start, modH_start, modG_start
+__mos_mt_size:
 mt_size:  .word 32, 96, 64, 32, 4000, 96, 0, 64, 960, 128
-mt_reloc: .word noreloc, noreloc, noreloc, noreloc, noreloc
+__mos_mt_reloc: .word noreloc, noreloc, noreloc, noreloc, noreloc
           .word modR_reloc, noreloc, noreloc, noreloc, noreloc
+
+; The mutable half of the module table (cache.h, table ABI version 1); the test
+; drivers know the arrays by their old names too.
+	.bss
+.globl __mos_mt_addr, __mos_mt_cr, __mos_mt_active, __mos_mt_ref, __mos_mt_stamp
+.globl mt_addr, mt_cr, mt_active
+__mos_mt_addr:
+mt_addr:   .fill 20
+__mos_mt_cr:
+mt_cr:     .fill 10
+__mos_mt_active:
+mt_active: .fill 10
+__mos_mt_ref:    .fill 10
+__mos_mt_stamp:  .fill 20
 
 ; C-callable stubs for the bank-0 test driver (m_* take A / A,X, return A).
 	.section .text.stubs,"ax",@progbits
 .globl m_double, m_cb, m_chain, m_sum, m_calld, t_carry, t_cin, t_iflag, t_inest, t_fail
 .globl m_r_entry, m_r_viaptr, m_r_lohi, m_r_call_sm, m_r_sm_to_b, m_r_try_evict
-.globl m_f_add7, m_h_double, m_g_incr, m_g_sum, host_tab
+.globl m_f_add7, m_h_double, m_g_incr, m_g_sum
 .globl m_add1, m_rec, m_calle, m_r_try_big, m_r_try_defrag, m_c_inc, m_c_calla, m_base
 m_base:                          ; no-op stub for measuring loop/call overhead
 	rts
@@ -334,12 +352,6 @@ m_r_try_big:
 	rts
 1:	ldx #1
 	rts
-; Static host module (id 6) entry table: three 3-byte jumps into C (modtab.c).
-host_tab:
-	jmp host_try_evict
-	jmp host_lock
-	jmp host_unlock
-	jmp host_defrag
 m_g_incr:                        ; C: (handle) -> 0 ok, 1 = lock refused
 	CALL 9, g_incr - modG_start
 	bcs 1f

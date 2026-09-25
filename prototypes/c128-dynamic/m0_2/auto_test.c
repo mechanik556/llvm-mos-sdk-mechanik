@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include "compat.h"
 
 /* Automatic polling: with mos_cache_auto_poll(1), the runtime's own safe points
  * (object allocation, handle lock, module load) run mos_cache_service, so the
@@ -13,14 +14,12 @@ uint8_t mos_cacheable_free(mos_handle_t h);
 void *mos_handle_lock(mos_handle_t h);
 void mos_handle_unlock(mos_handle_t h);
 uint8_t obj_bank(mos_handle_t h);
-uint8_t pool0_size(void);
 uint8_t mos_cache_shared(uint8_t min_units, uint8_t init_units, uint8_t max_units, uint16_t low, uint16_t high);
 void mos_cache_auto_poll(uint8_t every);
 void mod_init(void);
 unsigned char m_add1(unsigned char);
 size_t __set_heap_limit(size_t limit);
 size_t __heap_bytes_free(void);
-extern volatile uint8_t sh_grows, sh_hook_calls, sh_services;
 
 #define LOW 200
 #define HIGH 300
@@ -48,7 +47,7 @@ int main(void) {
 
   __set_heap_limit(1200);
   free(malloc(1));
-  mod_init();
+  mod_init_shared();
   en = mos_cache_shared(2, 6, 12, LOW, HIGH);
   o1 = mos_cacheable_malloc(20);
   p = mos_handle_lock(o1);

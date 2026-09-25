@@ -5,6 +5,7 @@
 #ifdef VIDEO80
 #include <c128.h>
 #endif
+#include "compat.h"
 
 /* M0.2 test driver (stages 2.1-2.3). Results are ordinary globals, read from
  * a VICE memory dump via the link map. Expected values are in the comments
@@ -29,8 +30,6 @@ extern volatile uint8_t mt_cr[NMODS];
 extern volatile uint16_t mt_addr[NMODS];
 extern const uint16_t mt_img[NMODS];
 extern const uint16_t r_info[3];
-extern volatile uint8_t mod_loads, mod_evictions;
-extern volatile uint8_t ams_top;
 
 /* 2.1/2.2 */
 static volatile uint8_t r1, r2, r3, r4, r_sum, r_carry, r_cin, r_if, r_inest, r_fail, loads0;

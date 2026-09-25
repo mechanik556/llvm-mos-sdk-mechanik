@@ -8,18 +8,19 @@ allocator, it needs `-mlto-zp=70` to leave zero page for the gate, and nothing
 in `mos-platform` depends on it. It lives here, outside `test/`, so the SDK's
 test tree contains only tests.
 
-* `m0_2/gate.s` - `call_gate`/`exit_gate` (bank-aware, load-on-miss)
-* `m0_2/gate_ct.s` - variant with the Module Table in Common RAM, kept as
-  evidence for the (rejected) mirror-array optimization
-* `m0_2/modtab.c` - Module Table, two-bank allocator, relocation, eviction,
-  spilling, defragmentation, heap objects
-* `m0_2/modtab.c` also holds "shared mode" (`mos_cache_shared`, `mos_cache_service`,
-  `__malloc_low_memory`): bank 0's pool becomes a block of the ordinary malloc heap,
-  which the cache shrinks when the program needs memory and regrows when it is
-  spare (design section 11.11 of the milestone document); no I/O ever happens inside
-  malloc. Tested by `m0_2/shared_test.c`, built at `-Os`.
-* `m0_2/modules.s` - hand-written test modules
+* `m0_2/modules.s` - hand-written test modules and their module table
+* `m0_2/compat.{h,c}` - map the tests' old names onto the SDK runtime and set up
+  the pools
 * `m0_2/*_test.c` - test drivers; `check_m0.py` runs them all under VICE
+
+The runtime itself (call gate, module table loader/relocator/evictor, object heap,
+shared mode with `malloc`, polling, host services for modules) is the SDK's:
+`mos-platform/c128/cache.{h,c}`, `cache-gate.s`, `cache-host.{c,s}` (milestone
+M0.3). This directory keeps the module-level tests that need hand-written module
+code: gate timing, eviction/pinning, relocation, host services, and shared mode with
+resident modules. (The prototype's own allocator and gate, and the rejected
+Common-RAM-table gate variant, were removed when the SDK runtime replaced them; they
+are in git history.)
 
 Run: `ninja mos-platform/install` in the SDK build directory, then
 `python prototypes/c128-dynamic/check_m0.py`. The tests dump memory at
@@ -30,8 +31,3 @@ machine's layout and can be overridden with `MOS_CLANG`, `SDK_INSTALL`,
 
 The static bank-1 placement it builds on (`c128_bank1_call`, `bank1.h`) is
 tested in `test/c128`.
-
-The shippable version of the runtime half (object heap, shared mode, hook, polling,
-module loader and gate) is `mos-platform/c128/cache.{h,c}` and `cache-gate.s`, with
-its tests in `test/c128` (milestone M0.3). This prototype remains the reference for
-the host-module services and the gate timing tests, which are not shipped.

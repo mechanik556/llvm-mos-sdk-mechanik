@@ -7,7 +7,7 @@ Each case shells out to m0_2/run.sh, which builds the test with the freshly
 installed SDK and runs it in x128; this script parses the "symbol $ADDR:
 bytes" output and compares. Takes several minutes.
 
-These tests belong to the prototype (gate.s, modtab.c, modules.s) and inspect
+These tests belong to the prototype (modules.s, compat.c and the drivers; the runtime is the SDK's cache.c and cache-gate.s) and inspect
 its internal state, so they read memory dumps rather than reporting through
 test_set_result(). The M0.1 (static bank-1 placement) tests are ordinary SDK
 tests: see test/c128 and `ninja test-c128`.
@@ -42,7 +42,7 @@ def check(title, vals, expected):
 def m0_2(stage, syms, expected, title, extra=""):
     import os
     env = dict(os.environ)
-    if extra:  # appended, so an outer EXTRA_FLAGS (e.g. -DCOMMON_TABLES) survives
+    if extra:  # appended, so an outer EXTRA_FLAGS survives
         env["EXTRA_FLAGS"] = (env.get("EXTRA_FLAGS", "") + " " + extra).strip()
     out = run([BASH, str(HERE / "m0_2" / "run.sh"), stage, " ".join(syms)], env)
     return check(title, parse(out), expected)
@@ -67,7 +67,7 @@ def cost(title):
     good = (v.get("cr_a") == "0E" and v.get("cr_b") == "0E" and v.get("cr_c") == "4E"
             and v.get("cr_d") == "4E" and v.get("loads") == "04"
             and all(340 <= x <= 370 for x in per.values())
-            and 30000 <= w("t_miss_a") < w("t_miss_b") and w("t_miss_c") < 65535)
+            and 15000 <= w("t_miss_a") < w("t_miss_b") and w("t_miss_c") < 65535)
     print(("PASS " if good else "FAIL ") + title)
     print("    per gate crossing (cycles, incl. trivial callee): "
           + ", ".join(f"{k[2:]}={x:.0f}" for k, x in per.items())

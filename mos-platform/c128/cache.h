@@ -45,11 +45,13 @@
 // anything else.
 //
 // Zero page. Using bank 1 costs 16 bytes of the zero-page pool (bank1.h); the
-// call gate (linked only by programs that use call_gate) costs 13 more. The
-// pool is ~102 bytes shared with the compiler's own use (-mlto-zp=102 in the
-// platform configuration). A program that uses the gate and lets the compiler
-// use all of it fails to link with "section '.zp.bss' will not fit in region
-// 'zp'"; compile and link it with a smaller budget, e.g. -mlto-zp=70.
+// call gate (linked only by programs that use __mos_call_gate) costs 13 more. The pool
+// is ~102 bytes shared with the compiler's own use (-mlto-zp=102 in the platform
+// configuration), and the compiler does not know about zero page that assembly
+// or library code takes. A program that uses the gate and lets the compiler use
+// all of it fails to link with "section '.zp.bss' will not fit in region 'zp'".
+// Tell the compiler to leave room when linking such a program:
+//   -mreserve-zp=29     (16 for bank 1 + 13 for the gate; 16 without the gate)
 //
 // Not thread-safe and not interrupt-safe: call from ordinary code, not from an
 // IRQ or NMI handler.
@@ -57,7 +59,7 @@
 // Code modules (optional). A program that supplies a module table (see
 // "Module table ABI" below) lets the runtime load, relocate, evict and
 // defragment relocatable code modules in the same pools; cache-gate.s provides
-// the call_gate that dispatches into them. Without a table, none of that is
+// the __mos_call_gate that dispatches into them. Without a table, none of that is
 // linked.
 
 #ifndef _C128_CACHE_H
@@ -202,6 +204,31 @@ uint8_t mos_cache_module_load(uint8_t id, uint8_t caller_bank);
 /// Evict module `id`. Returns 0, 1 if it is active (pinned), 2 if it is not
 /// resident, 3 if it is static.
 uint8_t mos_cache_module_evict(uint8_t id);
+
+/// Diagnostic hook, weak and doing nothing by default: called with the id of
+/// each module the runtime evicts.
+void mos_cache_on_evict(uint8_t id);
+
+// ---- Host services for modules ----------------------------------------------
+//
+// Module code can call back into the runtime through the gate, like any module,
+// by naming a *host* entry of the module table: a static entry (image address 0)
+// whose "code" is the runtime's jump table. Reserve one table entry for it and
+// call mos_cache_set_host(id) once at startup (this links the jump table, cache-
+// host.s, only into programs that ask for it). From module code, with the host
+// at index `id`:
+//
+//   CALL id, 0    evict module A          -> A = 0 ok / 1 pinned / 2 not resident / 3 static
+//   CALL id, 3    lock the object A (handle low byte, X = high byte) in the
+//                 caller's bank -> pointer in A (low) / X (high), 0 if refused
+//   CALL id, 6    unlock the object A/X
+//   CALL id, 9    defragment both pools -> A = items moved
+//
+// (CALL is `jsr __mos_call_gate; .byte id; .word offset`.) Arguments and results use
+// the registers as the gate passes them; __rc2-__rc4 may be used between calls.
+
+/// Register table entry `id` as the host. It must be a static entry (image 0).
+void mos_cache_set_host(uint8_t id);
 
 /// mos_handle_lock for code that runs in `caller_bank`: the object is made
 /// resident in that bank.

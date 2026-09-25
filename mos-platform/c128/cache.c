@@ -237,10 +237,9 @@ static void apply_relocs(uint8_t bank, uint16_t base, uint16_t table,
   }
 }
 
-#ifdef MOS_CACHE_EVICT_LOG
-// Test builds only: ids of evicted modules, in order.
-uint8_t mos_cache_evict_log[16], mos_cache_evict_n;
-#endif
+// Called with the id of every module evicted (a diagnostic hook; weak, doing
+// nothing by default).
+__attribute__((weak)) void mos_cache_on_evict(uint8_t id) { (void)id; }
 
 // Returns 0 ok; 1 = pinned (active); 2 = not resident; 3 = static.
 uint8_t mos_cache_module_evict(uint8_t id) {
@@ -264,10 +263,7 @@ uint8_t mos_cache_module_evict(uint8_t id) {
   __mos_mt_addr[id] = 0;
   __mos_mt_cr[id] = 0;
   mos_cache_stats.mod_evictions++;
-#ifdef MOS_CACHE_EVICT_LOG
-  if (mos_cache_evict_n < sizeof mos_cache_evict_log)
-    mos_cache_evict_log[mos_cache_evict_n++] = id;
-#endif
+  mos_cache_on_evict(id);
   return 0;
 }
 
