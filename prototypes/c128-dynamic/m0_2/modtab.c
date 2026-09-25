@@ -166,6 +166,7 @@ typedef uint16_t mos_handle_t;
 static struct { uint16_t addr, size, stamp; uint8_t bank, lock, used; } ho[NOBJ];
 static uint16_t ostamp;             // last-lock stamp source (LRU for objects)
 uint8_t defrag_moves, place_refused; // defragmentation moves; requests refused up front by the feasibility check (tests)
+static void poll_point(void);       // safe point: maybe run mos_cache_service (shared mode, automatic polling)
 uint8_t obj_spills;                 // objects moved to the other bank to make room (tests)
 
 // Copy between arbitrary banks in 16-byte chunks via a local buffer.
@@ -357,7 +358,9 @@ static uint8_t place(uint8_t first, uint8_t only, uint8_t units, uint8_t *bank_o
 uint8_t mod_load(uint8_t id) {
   uint16_t size = mt_size[id];
   uint8_t units = units_of(size), bank = 0;
-  uint8_t idx = place((gt_cr & 0x40) ? 1 : 0, 0xFF, units, &bank);
+  uint8_t idx;
+  poll_point();
+  idx = place((gt_cr & 0x40) ? 1 : 0, 0xFF, units, &bank);
   if (idx == 0xFF) return 1;
   {
     uint16_t dest = pool_base(bank) + (uint16_t)idx * UNIT;
@@ -405,6 +408,7 @@ uint8_t mod_load(uint8_t id) {
 
 mos_handle_t mos_cacheable_malloc(uint16_t size) {
   uint8_t h, bank = 0, idx;
+  poll_point();
   for (h = 0; h < NOBJ && ho[h].used; h++) {}
   if (h == NOBJ || !size) return 0;
   idx = place(0, 0xFF, units_of(size), &bank);
@@ -430,6 +434,7 @@ uint8_t mos_cacheable_free(mos_handle_t handle) {
 static void *lock_in(mos_handle_t handle, uint8_t caller_bank) {
   uint8_t units, idx, nb = 0;
   uint16_t dst;
+  poll_point();
   if (!handle || handle > NOBJ || !ho[handle - 1].used) return 0;
   if (ho[handle - 1].bank != caller_bank) {
     if (ho[handle - 1].lock) return 0;
@@ -619,6 +624,20 @@ uint8_t mos_cache_service(void) {
   }
   mos_tier_writebehind();
   return changed;
+}
+
+// Automatic polling: the safe points of the runtime (a module load, allocating
+// an object, locking one) call poll_point(), which runs mos_cache_service every
+// `every`th time. The gate's hit path is not a safe point and is unchanged.
+// A module's own code being active only pins it: growth is refused, yielding
+// is not. Off (0) by default.
+static uint8_t sh_every, sh_tick;
+void mos_cache_auto_poll(uint8_t every) { sh_every = every; sh_tick = 0; }
+static void poll_point(void) {
+  if (sh_every && ++sh_tick >= sh_every) {
+    sh_tick = 0;
+    mos_cache_service();
+  }
 }
 
 // Stage 2: malloc found nothing that fits `needed` bytes (chunk size). Yield

@@ -135,6 +135,11 @@ def main():
     ok &= m0_2("shared_test", shared_syms, shared_exp,
                "M0.2 shared mode: cache and malloc heap collaborate (polling, reclaim hook, relocation)",
                "-Os")   # -Os: at the default -O2 the program leaves the heap too little room
+    auto_syms = ["en", "off_no_poll", "low_ok", "shrunk", "no_hook", "above_low", "tags1", "grew", "data_ok", "mod_ok"]
+    auto_exp = {k: "01" for k in auto_syms}
+    auto_exp["en"] = "00"
+    ok &= m0_2("auto_test", auto_syms, auto_exp,
+               "M0.2 automatic polling: safe points run the cache service (no explicit call)", "-Os")
     ok &= cost("M0.2 gate cost: hit path ~350 cycles per crossing in every bank pairing")
     print("ALL PASS" if ok else "SOME FAILED")
     return 0 if ok else 1
