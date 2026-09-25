@@ -13,6 +13,11 @@ test tree contains only tests.
   evidence for the (rejected) mirror-array optimization
 * `m0_2/modtab.c` - Module Table, two-bank allocator, relocation, eviction,
   spilling, defragmentation, heap objects
+* `m0_2/modtab.c` also holds "shared mode" (`mos_cache_shared`, `mos_cache_service`,
+  `__malloc_low_memory`): bank 0's pool becomes a block of the ordinary malloc heap,
+  which the cache shrinks when the program needs memory and regrows when it is
+  spare (design section 11.11 of the milestone document); no I/O ever happens inside
+  malloc. Tested by `m0_2/shared_test.c`, built at `-Os`.
 * `m0_2/modules.s` - hand-written test modules
 * `m0_2/*_test.c` - test drivers; `check_m0.py` runs them all under VICE
 
