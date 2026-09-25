@@ -30,3 +30,8 @@ machine's layout and can be overridden with `MOS_CLANG`, `SDK_INSTALL`,
 
 The static bank-1 placement it builds on (`c128_bank1_call`, `bank1.h`) is
 tested in `test/c128`.
+
+The shippable version of the runtime half (object heap, shared mode, hook, polling,
+module loader and gate) is `mos-platform/c128/cache.{h,c}` and `cache-gate.s`, with
+its tests in `test/c128` (milestone M0.3). This prototype remains the reference for
+the host-module services and the gate timing tests, which are not shipped.
