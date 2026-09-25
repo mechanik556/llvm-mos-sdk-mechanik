@@ -123,6 +123,18 @@ def main():
                   "qa1": "02", "qa2": "0D", "qa3": "0F", "qa4": "0F", "e_moved": "01", "e_same": "01",
                   "e_data": "01", "frag_ok": "01", "big_ok": "01", "big_b": "01", "a_data": "01"}
     ok &= m0_2("defrag_test", defrag_syms, defrag_exp, "M0.2 defragmentation (module relocation, pinning, auto on alloc)")
+    shared_syms = ["en", "pool_sz0", "a1", "r1", "bank0_full", "more_than_static", "all_tags_ok1",
+                   "hooked", "pool_min", "yielded3", "oom_end", "disjoint1", "r_still", "a_dropped",
+                   "spilled", "r_reloc_ok1", "cache_full", "tags_ok2", "malloc_still", "exact_free1",
+                   "adjacent", "moved", "pool_after1", "r_reloc_ok2", "r_sm_ok", "a_reload", "objs_ok",
+                   "pin_refused", "pin_size", "pin_moves_same", "after_unpin", "at_max", "want_cleared",
+                   "low_ok", "polite_shrunk", "no_hook_used", "no_failed", "exact_free2", "end_ok"]
+    shared_exp = {k: "01" for k in shared_syms}
+    shared_exp.update({"en": "00", "pool_sz0": "06", "a1": "05", "pool_min": "03", "yielded3": "03",
+                       "pool_after1": "07", "pin_size": "07", "after_unpin": "0B", "at_max": "0C"})
+    ok &= m0_2("shared_test", shared_syms, shared_exp,
+               "M0.2 shared mode: cache and malloc heap collaborate (polling, reclaim hook, relocation)",
+               "-Os")   # -Os: at the default -O2 the program leaves the heap too little room
     ok &= cost("M0.2 gate cost: hit path ~350 cycles per crossing in every bank pairing")
     print("ALL PASS" if ok else "SOME FAILED")
     return 0 if ok else 1

@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 // M0.2: Module Table state, two-bank allocator, relocating loader, evictor.
@@ -35,21 +36,26 @@ extern const uint16_t mt_size[NMODS];   // image size in bytes
 extern const uint16_t mt_reloc[NMODS];  // relocation table address
 extern volatile uint8_t gt_cr;          // caller's $FF00 (zero page, gate.s)
 
-static uint8_t pool0[POOL0_UNITS * UNIT];
+// Bank 0's pool. In static mode (the default) it is this array. In shared mode
+// (mos_cache_shared, below) it is instead a block of the ordinary malloc heap,
+// pool0_p, that grows and shrinks.
+static uint8_t pool0_static[POOL0_UNITS * UNIT];
+static uint8_t *pool0_p;
 // Bank-1 pool: only its ADDRESS is used from bank-0 code (never dereferenced
 // there); bank 1 is accessed via the __c128bank1_* helpers.
 __attribute__((section(".c128bank1.bss"))) static uint8_t pool1[POOL1_UNITS * UNIT];
 
 static uint8_t bitmap[2][(POOL1_UNITS + 7) / 8];
-static const uint8_t pool_units[2] = {POOL0_UNITS, POOL1_UNITS};
+static uint8_t pool_units[2] = {POOL0_UNITS, POOL1_UNITS};   // bank 0's changes in shared mode
 
+static uint8_t sh_want;             // bank 0 was too small for a request: it would like to grow (shared mode)
 uint8_t mod_loads, mod_evictions;   // counters (for tests)
 uint8_t evict_log[16], evict_n;     // ids of evicted modules, in order (for tests)
 
 void proto_bank1_write(char *vma, const char *lma, unsigned short size);
 void proto_bank1_read(char *dest, const char *src, unsigned short size);
 
-static uint16_t pool_base(uint8_t bank) { return bank ? (uint16_t)pool1 : (uint16_t)pool0; }
+static uint16_t pool_base(uint8_t bank) { return bank ? (uint16_t)pool1 : pool0_p ? (uint16_t)pool0_p : (uint16_t)pool0_static; }
 static uint8_t units_of(uint16_t size) { return (uint8_t)((size + UNIT - 1) / UNIT); }
 static uint8_t bit_used(uint8_t bank, uint8_t u) { return bitmap[bank][u >> 3] & (1 << (u & 7)); }
 
@@ -324,6 +330,7 @@ static uint8_t place(uint8_t first, uint8_t only, uint8_t units, uint8_t *bank_o
   for (k = 0; k < 2 && idx == 0xFF; k++) {                 /* pass 0 */
     bank = k ? !first : first;
     if (ok[bank]) idx = alloc(bank, units);
+    if (idx == 0xFF && bank == 0) sh_want = 1;   /* bank 0 was full: wants to grow (shared mode) */
   }
   for (k = 0; k < 2 && idx == 0xFF; k++) {                 /* pass 1: defragment */
     bank = k ? !first : first;
@@ -446,6 +453,8 @@ void mos_handle_unlock(mos_handle_t handle) {
 // Test helpers.
 uint8_t obj_bank(mos_handle_t handle) { return ho[handle - 1].bank; }
 uint8_t obj_lock(mos_handle_t handle) { return ho[handle - 1].lock; }
+uint8_t pool0_size(void) { return pool_units[0]; }
+uint16_t pool0_base(void) { return pool_base(0); }
 
 // Host (static) module entry points, reached through the gate from module
 // code in either bank (offsets 0, 3, 6 of the jump table host_tab in
@@ -460,6 +469,166 @@ void host_unlock(mos_handle_t handle) { mos_handle_unlock(handle); }
 // modules and locked objects are never moved.
 uint8_t mos_defrag(void) { return defrag(0) + defrag(1); }
 uint8_t host_defrag(void) { return mos_defrag(); }
+
+// ---- Shared mode: bank 0's pool is a block of the ordinary malloc heap ------
+// (design 11.11). Ordinary malloc/free/new/delete are unchanged and know
+// nothing about this; the cache is the polite party:
+//  Stage 1 (polling): mos_cache_service(), called at safe points, keeps the
+//    heap's free bytes between two watermarks - it gives pool tail back when
+//    the heap runs low and takes it again when there is plenty and the cache
+//    is short of bank-0 room.
+//  Stage 2 (reclaim): __malloc_low_memory, called by malloc itself when a
+//    request cannot be satisfied, makes the cache give back what is needed
+//    right now. It does NO I/O and calls no allocator entry other than
+//    realloc-shrink, which never allocates: it drops clean modules, spills
+//    objects to bank 1, and shrinks the pool block in place. Whatever is not
+//    cheap to give up in that way (disk demotion of dirty items) is done at
+//    the polling safe points, never here.
+// Tiers that do not exist yet plug in at mos_tier_demote (an I/O-free faster
+// tier such as the REU: room for the items evicted from bank 0/1 before they
+// have to be dropped or reach disk) and mos_tier_writebehind (slow-tier
+// write-behind, run only from the polling call so that no I/O ever happens
+// inside malloc).
+
+size_t __heap_bytes_free(void);
+
+static uint8_t sh_min, sh_max, sh_busy;
+static uint16_t sh_low, sh_high;                  // free-byte watermarks of the malloc heap
+uint8_t sh_grows, sh_moves, sh_hook_calls, sh_yielded, sh_services;   // counters (for tests)
+
+// Default (weak) tier extension points: nothing to demote to, nothing to write.
+__attribute__((weak)) uint8_t mos_tier_demote(uint8_t bank) { (void)bank; return 0; }
+__attribute__((weak)) void mos_tier_writebehind(void) {}
+
+// True if any active module or locked object is in bank 0's pool: it cannot
+// move, so the pool block must not be moved either.
+static uint8_t pool0_pinned(void) {
+  uint8_t id;
+  for (id = 0; id < NMODS; id++)
+    if (mt_img[id] && (mt_addr[id] >> 8) && mt_active[id] && mt_cr[id] != 0x4E) return 1;
+  for (id = 0; id < NOBJ; id++)
+    if (ho[id].used && ho[id].lock && !ho[id].bank) return 1;
+  return 0;
+}
+
+static uint8_t used_top(void) {          // highest used unit of bank 0, plus one
+  uint8_t u = pool_units[0];
+  while (u && !bit_used(0, u - 1)) u--;
+  return u;
+}
+
+// Give up to `want` units of bank 0's pool tail back to the heap; returns the
+// number given. Never goes below sh_min units.
+static uint8_t pool0_yield(uint8_t want) {
+  uint8_t given = 0;
+  sh_busy = 1;
+  while (given < want && pool_units[0] > sh_min) {
+    uint8_t top = used_top(), flo = top > sh_min ? top : sh_min, room, n, victim;
+    room = pool_units[0] - flo;
+    if (!room && pool_free_units(0)) {            /* free units exist, but not at the end */
+      defrag(0);
+      top = used_top(); flo = top > sh_min ? top : sh_min;
+      room = pool_units[0] - flo;
+    }
+    if (!room) {                                  /* make some: cheapest first */
+      if (spill_one(0)) continue;                 /* object -> bank 1 (lossless) */
+      if (mos_tier_demote(0)) continue;           /* object -> REU (when it exists) */
+      victim = find_victim(0);                    /* clean module: just drop it */
+      if (victim == 0xFF) break;                  /* only pinned items are left */
+      mod_evict(victim);
+      continue;
+    }
+    n = (uint8_t)(want - given);
+    if (n > room) n = room;
+    if (realloc(pool0_p, (uint16_t)(pool_units[0] - n) * UNIT) != (void *)pool0_p) break;   /* shrinks in place */
+    pool_units[0] -= n;
+    given += n;
+    sh_yielded += n;
+  }
+  sh_busy = 0;
+  return given;
+}
+
+// Take `add` more units for bank 0's pool from the heap. The block may have to
+// move, so this is refused while anything in bank 0 is pinned; when it does
+// move, every resident module in it is relocated by the move delta and every
+// object's address adjusted (handles do not change).
+static uint8_t pool0_grow(uint8_t add) {
+  uint8_t cur = pool_units[0], id;
+  uint8_t *np;
+  uint16_t old = (uint16_t)pool0_p, delta;
+  if (!add || (uint16_t)cur + add > sh_max || pool0_pinned()) return 0;
+  sh_busy = 1;
+  np = realloc(pool0_p, (uint16_t)(cur + add) * UNIT);
+  sh_busy = 0;
+  if (!np) return 0;
+  if ((uint16_t)np != old) {
+    delta = (uint16_t)np - old;
+    for (id = 0; id < NMODS; id++) {
+      if (!mt_img[id] || !(mt_addr[id] >> 8) || mt_cr[id] == 0x4E) continue;
+      mt_addr[id] += delta;
+      apply_relocs(0, mt_addr[id], mt_reloc[id], delta);
+    }
+    for (id = 0; id < NOBJ; id++)
+      if (ho[id].used && !ho[id].bank) ho[id].addr += delta;
+    pool0_p = np;
+    sh_moves++;
+  }
+  pool_units[0] = cur + add;
+  sh_grows += add;
+  return add;
+}
+
+// Switch to shared mode. Only while bank 0's pool is empty. The pool starts at
+// `init_units`, never shrinks below `min_units` or grows beyond `max_units`
+// (at most POOL1_UNITS: the bitmaps' size), and mos_cache_service keeps the
+// heap's free bytes at least `low` (yielding) and, when growing, at least
+// `high` afterwards. Returns 0, 1 = bank 0 in use or already shared, 2 = no room.
+uint8_t mos_cache_shared(uint8_t min_units, uint8_t init_units, uint8_t max_units, uint16_t low, uint16_t high) {
+  uint8_t *p;
+  if (pool0_p || pool_free_units(0) != pool_units[0] || !min_units || min_units > init_units ||
+      init_units > max_units || max_units > POOL1_UNITS)
+    return 1;
+  sh_busy = 1;
+  p = malloc((uint16_t)init_units * UNIT);
+  sh_busy = 0;
+  if (!p) return 2;
+  pool0_p = p;
+  pool_units[0] = init_units;
+  sh_min = min_units; sh_max = max_units; sh_low = low; sh_high = high;
+  return 0;
+}
+
+// Stage 1, polite client: call at safe points (a main loop, between files or
+// frames). Returns 1 if the pool changed size.
+uint8_t mos_cache_service(void) {
+  size_t free;
+  uint8_t changed = 0;
+  sh_services++;
+  if (!pool0_p || sh_busy) return 0;
+  free = __heap_bytes_free();
+  if (free < sh_low) {
+    size_t need = sh_low - free;
+    changed = pool0_yield((uint8_t)(need / UNIT + 1)) != 0;
+  } else if (sh_want && free > sh_high) {
+    size_t spare = (free - sh_high) / UNIT;
+    uint8_t add = spare > 4 ? 4 : (uint8_t)spare;      /* a few units per call */
+    if (add > sh_max - pool_units[0]) add = sh_max - pool_units[0];
+    changed = pool0_grow(add) != 0;
+    if (!add || pool_units[0] == sh_max) sh_want = 0;
+  }
+  mos_tier_writebehind();
+  return changed;
+}
+
+// Stage 2: malloc found nothing that fits `needed` bytes (chunk size). Yield
+// enough of the pool to fit it, if possible; no I/O (see above).
+int __malloc_low_memory(size_t needed) {
+  size_t units = needed / UNIT + 1;
+  sh_hook_calls++;
+  if (!pool0_p || sh_busy) return 0;
+  return pool0_yield(units > 255 ? 255 : (uint8_t)units) != 0;
+}
 
 extern char host_tab[];
 void mod_init(void) {
