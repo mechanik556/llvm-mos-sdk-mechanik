@@ -25,6 +25,7 @@ function(add_common_compile_test target type)
       -DLLVM_MOS=${LLVM_MOS}
       -DCMAKE_C_FLAGS=${CMAKE_C_FLAGS}
       -DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}
+      -DCMAKE_ASM_FLAGS=${CMAKE_ASM_FLAGS}
       -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
       -DCMAKE_EXPORT_COMPILE_COMMANDS=${CMAKE_EXPORT_COMPILE_COMMANDS}
     )
@@ -58,11 +59,11 @@ endfunction()
 #   RESTORE_RANGE - c128: hex start-end of the Common-RAM code area the runner
 #                   checks is restored at exit (default: the platform default)
 function(add_vice_test name)
-  cmake_parse_arguments(ARG "" "SOURCE;RESTORE_RANGE" "LINK_OPTIONS" ${ARGN})
+  cmake_parse_arguments(ARG "" "SOURCE;RESTORE_RANGE" "LINK_OPTIONS;EXTRA_SOURCES" ${ARGN})
   if(NOT ARG_SOURCE)
     set(ARG_SOURCE ${name}.c)
   endif()
-  add_executable(${name}.prg ${ARG_SOURCE})
+  add_executable(${name}.prg ${ARG_SOURCE} ${ARG_EXTRA_SOURCES})
   target_link_libraries(${name}.prg test-lib-emutest)
   # -u: LTO would otherwise delete test_result, which the program only writes
   # and the runner reads from outside.

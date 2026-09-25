@@ -1,0 +1,848 @@
+// Copyright 2026 LLVM-MOS Project
+// Licensed under the Apache License, Version 2.0 with LLVM Exceptions.
+// See https://github.com/llvm-mos/llvm-mos-sdk/blob/main/LICENSE for license
+// information.
+
+// Bank-aware object heap and code-module cache; see cache.h for the model and
+// the API. This file is the runtime; cache-gate.s/cache-gate.c are the call
+// gate that dispatches into modules.
+//
+// Two pools, one per RAM bank, each a run of equal-sized units tracked by a
+// bitmap. Objects and modules are placed in units; an unlocked object or an
+// inactive module can be moved, spilled to the other bank, or (modules) dropped
+// to make room. Bank 0's pool is either caller-provided memory or one block of
+// the malloc heap that shrinks and grows (shared mode).
+//
+// Module canonical form: a module's stored image (__mos_mt_img[id]) is
+// assembled at its own address; all self-referential 16-bit values in it are
+// "canonical" relative to that base. Loading at `dest` adds delta = dest -
+// image at every relocation-table location; evicting SUBTRACTS delta from
+// whatever value is currently there and writes the image back. Paired lo/hi
+// fixups are combined into one 16-bit operation.
+
+#include "cache.h"
+
+#include <stdlib.h>
+#include <string.h>
+
+// From bank1.h, which cannot be included when the platform library is built.
+void c128_bank1_write(unsigned short bank1_dest, const void *src,
+                      unsigned short size);
+void c128_bank1_read(void *dest, unsigned short bank1_src, unsigned short size);
+
+#define MAX_UNITS 254 // per pool: a unit index is a byte and 255 is "none"
+#define BITMAP_BYTES ((MAX_UNITS + 7) / 8)
+#define NOBJ 32
+#define BANK0_SHIFT 5 // bank 0's pool always uses 32-byte units
+#define DEFAULT_BANK1_SHIFT 7
+
+// ---- Module table (supplied by the program; see cache.h) -------------------
+// Weak defaults describe "no modules", so a program without a module table
+// links and the module code below is dead.
+extern const uint8_t __mos_mt_count;
+extern uint16_t __mos_mt_addr[];
+extern uint8_t __mos_mt_cr[];
+extern volatile uint8_t __mos_mt_active[];
+extern volatile uint8_t __mos_mt_ref[];
+extern uint16_t __mos_mt_stamp[];
+extern const uint16_t __mos_mt_img[];
+extern const uint16_t __mos_mt_size[];
+extern const uint16_t __mos_mt_reloc[];
+
+__attribute__((weak)) const uint8_t __mos_mt_count = 0;
+__attribute__((weak)) uint16_t __mos_mt_addr[1];
+__attribute__((weak)) uint8_t __mos_mt_cr[1];
+__attribute__((weak)) volatile uint8_t __mos_mt_active[1];
+__attribute__((weak)) volatile uint8_t __mos_mt_ref[1];
+__attribute__((weak)) uint16_t __mos_mt_stamp[1];
+__attribute__((weak)) const uint16_t __mos_mt_img[1];
+__attribute__((weak)) const uint16_t __mos_mt_size[1];
+__attribute__((weak)) const uint16_t __mos_mt_reloc[1];
+
+#define NMODS __mos_mt_count
+#define MOD_IN_BANK1(id) (__mos_mt_cr[id] == 0x4E)
+#define MOD_RESIDENT(id) (__mos_mt_img[id] && (__mos_mt_addr[id] >> 8))
+
+// ---- Pools ------------------------------------------------------------------
+static uint16_t pool_base[2];
+static uint8_t pool_units[2];
+static uint8_t pool_shift[2] = {BANK0_SHIFT, DEFAULT_BANK1_SHIFT};
+static uint8_t bitmap[2][BITMAP_BYTES];
+static uint8_t bank1_ready;
+static uint8_t shared; // bank 0's pool is a block of the malloc heap
+static uint16_t stamp_clock;
+
+struct mos_cache_stats mos_cache_stats;
+
+static uint8_t bit_used(uint8_t bank, uint8_t u) {
+  return bitmap[bank][u >> 3] & (1 << (u & 7));
+}
+
+// Units needed for `size` bytes in `bank`; 255 if it cannot fit any pool.
+static uint8_t units_of(uint8_t bank, uint16_t size) {
+  uint16_t unit = (uint16_t)1 << pool_shift[bank];
+  uint16_t units = (size >> pool_shift[bank]) + ((size & (unit - 1)) != 0);
+  return units > MAX_UNITS ? 255 : (uint8_t)units;
+}
+
+static uint16_t unit_addr(uint8_t bank, uint8_t idx) {
+  return pool_base[bank] + ((uint16_t)idx << pool_shift[bank]);
+}
+
+static uint8_t unit_of(uint8_t bank, uint16_t addr) {
+  return (uint8_t)((addr - pool_base[bank]) >> pool_shift[bank]);
+}
+
+// First-fit run of `units` free units in `bank`'s pool; returns unit index or
+// 0xFF.
+static uint8_t alloc(uint8_t bank, uint8_t units) {
+  uint8_t n = pool_units[bank], run = 0, u;
+  if (units == 255)
+    return 0xFF;
+  for (u = 0; u < n; u++) {
+    if (bit_used(bank, u)) {
+      run = 0;
+      continue;
+    }
+    if (++run == units) {
+      uint8_t start = u + 1 - units, k;
+      for (k = start; k <= u; k++)
+        bitmap[bank][k >> 3] |= 1 << (k & 7);
+      return start;
+    }
+  }
+  return 0xFF;
+}
+
+static void mark(uint8_t bank, uint8_t start, uint8_t units) {
+  uint8_t k;
+  for (k = start; k < start + units; k++)
+    bitmap[bank][k >> 3] |= 1 << (k & 7);
+}
+
+static void release(uint8_t bank, uint8_t start, uint8_t units) {
+  uint8_t k;
+  for (k = start; k < start + units; k++)
+    bitmap[bank][k >> 3] &= ~(1 << (k & 7));
+}
+
+// Byte/word access to a resident item's memory in either bank.
+static uint8_t get8(uint8_t bank, uint16_t a) {
+  uint8_t v;
+  if (bank)
+    c128_bank1_read(&v, a, 1);
+  else
+    v = *(volatile uint8_t *)a;
+  return v;
+}
+static void set8(uint8_t bank, uint16_t a, uint8_t v) {
+  if (bank)
+    c128_bank1_write(a, &v, 1);
+  else
+    *(volatile uint8_t *)a = v;
+}
+static uint16_t get16(uint8_t bank, uint16_t a) {
+  return get8(bank, a) | ((uint16_t)get8(bank, a + 1) << 8);
+}
+static void set16(uint8_t bank, uint16_t a, uint16_t v) {
+  set8(bank, a, (uint8_t)v);
+  set8(bank, a + 1, (uint8_t)(v >> 8));
+}
+
+// Copy between arbitrary banks in 16-byte chunks via a local buffer.
+static void xcopy(uint8_t dbank, uint16_t dst, uint8_t sbank, uint16_t src,
+                  uint16_t size) {
+  uint8_t buf[16];
+  while (size) {
+    uint8_t n = size > 16 ? 16 : (uint8_t)size;
+    if (sbank)
+      c128_bank1_read(buf, src, n);
+    else
+      memcpy(buf, (const void *)src, n);
+    if (dbank)
+      c128_bank1_write(dst, buf, n);
+    else
+      memcpy((void *)dst, buf, n);
+    dst += n;
+    src += n;
+    size -= n;
+  }
+}
+
+// Bank 1's default pool: everything above the static bank-1 content.
+extern char __c128bank1_free_start[];
+extern char __c128bank1_free_end[];
+
+static void ensure_bank1(void) {
+  uint16_t start, end;
+  uint8_t shift = DEFAULT_BANK1_SHIFT;
+  uint16_t units;
+  if (bank1_ready)
+    return;
+  start = ((uint16_t)__c128bank1_free_start + (((uint16_t)1 << shift) - 1)) &
+          ~(((uint16_t)1 << shift) - 1);
+  end = (uint16_t)__c128bank1_free_end;
+  units = start < end ? (end - start) >> shift : 0;
+  pool_base[1] = start;
+  pool_units[1] = units > MAX_UNITS ? MAX_UNITS : (uint8_t)units;
+  pool_shift[1] = shift;
+  bank1_ready = 1;
+}
+
+uint8_t mos_cache_bank1(uint16_t base, uint8_t units, uint8_t unit_shift) {
+  if (unit_shift < 5 || unit_shift > 10 || units > MAX_UNITS || bank1_ready)
+    return 1;
+  pool_base[1] = base;
+  pool_units[1] = units;
+  pool_shift[1] = unit_shift;
+  bank1_ready = 1;
+  return 0;
+}
+
+uint8_t mos_cache_static(void *pool, uint8_t units) {
+  if (!pool || !units || units > MAX_UNITS || pool_base[0])
+    return 1;
+  pool_base[0] = (uint16_t)pool;
+  pool_units[0] = units;
+  return 0;
+}
+
+// ---- Modules
+// ------------------------------------------------------------------
+
+// Relocation table: repeated {1, off16} (FULL16) or {2, lo_off16, hi_off16}
+// (paired LOW8/HIGH8), terminated by 0. Offsets are from the module base.
+// Adds `delta` (mod 65536) to every listed value.
+static void apply_relocs(uint8_t bank, uint16_t base, uint16_t table,
+                         uint16_t delta) {
+  const uint8_t *p = (const uint8_t *)table;
+  for (;;) {
+    uint8_t kind = *p++;
+    if (!kind)
+      break;
+    if (kind == 1) {
+      uint16_t a = base + (p[0] | ((uint16_t)p[1] << 8));
+      p += 2;
+      set16(bank, a, get16(bank, a) + delta);
+    } else {
+      uint16_t lo = base + (p[0] | ((uint16_t)p[1] << 8));
+      uint16_t hi = base + (p[2] | ((uint16_t)p[3] << 8));
+      uint16_t v;
+      p += 4;
+      v = get8(bank, lo) | ((uint16_t)get8(bank, hi) << 8);
+      v += delta;
+      set8(bank, lo, (uint8_t)v);
+      set8(bank, hi, (uint8_t)(v >> 8));
+    }
+  }
+}
+
+#ifdef MOS_CACHE_EVICT_LOG
+// Test builds only: ids of evicted modules, in order.
+uint8_t mos_cache_evict_log[16], mos_cache_evict_n;
+#endif
+
+// Returns 0 ok; 1 = pinned (active); 2 = not resident; 3 = static.
+uint8_t mos_cache_module_evict(uint8_t id) {
+  uint16_t addr = __mos_mt_addr[id], size = __mos_mt_size[id];
+  uint8_t bank = MOD_IN_BANK1(id), units = units_of(bank, size);
+  if (!__mos_mt_img[id])
+    return 3;
+  if (!(addr >> 8))
+    return 2;
+  if (__mos_mt_active[id])
+    return 1;
+  // Un-relocate in place by delta subtraction, then write the canonical image
+  // back to the backing store (the program image here).
+  apply_relocs(bank, addr, __mos_mt_reloc[id],
+               (uint16_t)(__mos_mt_img[id] - addr));
+  if (bank)
+    c128_bank1_read((void *)__mos_mt_img[id], addr, size);
+  else
+    memcpy((void *)__mos_mt_img[id], (const void *)addr, size);
+  release(bank, unit_of(bank, addr), units);
+  __mos_mt_addr[id] = 0;
+  __mos_mt_cr[id] = 0;
+  mos_cache_stats.mod_evictions++;
+#ifdef MOS_CACHE_EVICT_LOG
+  if (mos_cache_evict_n < sizeof mos_cache_evict_log)
+    mos_cache_evict_log[mos_cache_evict_n++] = id;
+#endif
+  return 0;
+}
+
+// Oldest resident, non-static, inactive module in `bank` (optionally only those
+// whose reference bit is clear), or 0xFF.
+static uint8_t oldest(uint8_t bank, uint8_t cold_only) {
+  uint8_t id, best = 0xFF;
+  for (id = 0; id < NMODS; id++) {
+    if (!MOD_RESIDENT(id) || __mos_mt_active[id])
+      continue;
+    if (MOD_IN_BANK1(id) != bank)
+      continue;
+    if (cold_only && __mos_mt_ref[id])
+      continue;
+    if (best == 0xFF || __mos_mt_stamp[id] < __mos_mt_stamp[best])
+      best = id;
+  }
+  return best;
+}
+
+// CLOCK-style victim choice: the oldest candidate not used since the last
+// sweep; if every candidate was used, the sweep clears all reference bits
+// (second chance) and the oldest is taken. 0xFF if there is no candidate.
+static uint8_t find_victim(uint8_t bank) {
+  uint8_t v = oldest(bank, 1), id;
+  if (v != 0xFF)
+    return v;
+  for (id = 0; id < NMODS; id++)
+    __mos_mt_ref[id] = 0;
+  return oldest(bank, 0);
+}
+
+// ---- Objects
+// ------------------------------------------------------------------
+
+static struct {
+  uint16_t addr, size, stamp;
+  uint8_t bank, lock, used;
+} ho[NOBJ];
+static uint16_t ostamp; // last-lock stamp source (LRU for objects)
+
+static void poll_point(void);
+
+// Make room in `bank` without discarding anything: move the least recently
+// locked unlocked object that fits into the OTHER bank's current free space
+// over there. Returns 1 if an object was moved. (Only the other bank is a place
+// an object can go until an REU/disk tier exists; if it has no room this
+// returns 0 and the caller falls through to evicting modules, and finally to
+// failure.)
+static uint8_t spill_one(uint8_t bank) {
+  uint32_t tried = 0;
+  for (;;) {
+    uint8_t h, best = 0xFF, units, idx;
+    uint16_t dst;
+    for (h = 0; h < NOBJ; h++) {
+      if (!ho[h].used || ho[h].lock || ho[h].bank != bank ||
+          (tried & ((uint32_t)1 << h)))
+        continue;
+      if (best == 0xFF || ho[h].stamp < ho[best].stamp)
+        best = h;
+    }
+    if (best == 0xFF)
+      return 0;
+    tried |= (uint32_t)1 << best;
+    units = units_of(!bank, ho[best].size);
+    idx = alloc(!bank, units);
+    if (idx == 0xFF)
+      continue; // does not fit over there: try the next
+    dst = unit_addr(!bank, idx);
+    xcopy(!bank, dst, bank, ho[best].addr, ho[best].size);
+    release(bank, unit_of(bank, ho[best].addr), units_of(bank, ho[best].size));
+    ho[best].addr = dst;
+    ho[best].bank = !bank;
+    mos_cache_stats.obj_spills++;
+    return 1;
+  }
+}
+
+uint8_t mos_cache_free_units(uint8_t bank) {
+  uint8_t u, n = 0;
+  if (bank)
+    ensure_bank1();
+  for (u = 0; u < pool_units[bank]; u++)
+    if (!bit_used(bank, u))
+      n++;
+  return n;
+}
+
+// Longest run of free units.
+uint8_t mos_cache_max_run(uint8_t bank) {
+  uint8_t u, run = 0, best = 0;
+  if (bank)
+    ensure_bank1();
+  for (u = 0; u < pool_units[bank]; u++) {
+    if (bit_used(bank, u))
+      run = 0;
+    else if (++run > best)
+      best = run;
+  }
+  return best;
+}
+
+// FEASIBILITY: the longest run of units in `bank` NOT held by a pinned item (an
+// active module or a locked object). Pinned items can never move or be evicted,
+// so no amount of spilling/eviction/defragmentation can produce a bigger
+// contiguous run than this.
+static uint8_t max_gap(uint8_t bank) {
+  uint8_t pin[BITMAP_BYTES], id, u, run = 0, best = 0, s, n;
+  memset(pin, 0, sizeof pin);
+  for (id = 0; id < NMODS; id++) {
+    if (!MOD_RESIDENT(id) || !__mos_mt_active[id] || MOD_IN_BANK1(id) != bank)
+      continue;
+    s = unit_of(bank, __mos_mt_addr[id]);
+    for (n = 0; n < units_of(bank, __mos_mt_size[id]); n++)
+      pin[(s + n) >> 3] |= 1 << ((s + n) & 7);
+  }
+  for (id = 0; id < NOBJ; id++) {
+    if (!ho[id].used || !ho[id].lock || ho[id].bank != bank)
+      continue;
+    s = unit_of(bank, ho[id].addr);
+    for (n = 0; n < units_of(bank, ho[id].size); n++)
+      pin[(s + n) >> 3] |= 1 << ((s + n) & 7);
+  }
+  for (u = 0; u < pool_units[bank]; u++) {
+    if (pin[u >> 3] & (1 << (u & 7)))
+      run = 0;
+    else if (++run > best)
+      best = run;
+  }
+  return best;
+}
+
+// DEFRAGMENTATION of one bank's pool: slide every unpinned resident (module or
+// object) down to the end of the previous item, so free space collects into as
+// few runs as the pinned items allow. Modules are relocated by the move delta
+// (added to their current values, so self-modified operands stay correct);
+// objects are plain copies (their handles do not change). Returns the number of
+// items moved.
+static uint8_t defrag(uint8_t bank) {
+  uint8_t cursor = 0, moved = 0;
+  for (;;) {
+    uint8_t id, bs = 0xFF, bkind = 0, bidx = 0, n, pinned;
+    uint16_t oldaddr, newaddr;
+    for (id = 0; id < NMODS; id++) {
+      uint8_t s;
+      if (!MOD_RESIDENT(id) || MOD_IN_BANK1(id) != bank)
+        continue;
+      s = unit_of(bank, __mos_mt_addr[id]);
+      if (s >= cursor && (bs == 0xFF || s < bs)) {
+        bs = s;
+        bkind = 1;
+        bidx = id;
+      }
+    }
+    for (id = 0; id < NOBJ; id++) {
+      uint8_t s;
+      if (!ho[id].used || ho[id].bank != bank)
+        continue;
+      s = unit_of(bank, ho[id].addr);
+      if (s >= cursor && (bs == 0xFF || s < bs)) {
+        bs = s;
+        bkind = 2;
+        bidx = id;
+      }
+    }
+    if (bs == 0xFF)
+      break;
+    if (bkind == 1) {
+      n = units_of(bank, __mos_mt_size[bidx]);
+      pinned = __mos_mt_active[bidx] != 0;
+    } else {
+      n = units_of(bank, ho[bidx].size);
+      pinned = ho[bidx].lock != 0;
+    }
+    if (pinned || bs == cursor) {
+      cursor = bs + n;
+      continue;
+    }
+    newaddr = unit_addr(bank, cursor);
+    if (bkind == 1) {
+      oldaddr = __mos_mt_addr[bidx];
+      // Moving down: a forward copy is overlap-safe.
+      xcopy(bank, newaddr, bank, oldaddr, __mos_mt_size[bidx]);
+      apply_relocs(bank, newaddr, __mos_mt_reloc[bidx],
+                   (uint16_t)(newaddr - oldaddr));
+      __mos_mt_addr[bidx] = newaddr;
+    } else {
+      oldaddr = ho[bidx].addr;
+      xcopy(bank, newaddr, bank, oldaddr, ho[bidx].size);
+      ho[bidx].addr = newaddr;
+    }
+    release(bank, bs, n);
+    mark(bank, cursor, n);
+    cursor += n;
+    moved++;
+    mos_cache_stats.defrag_moves++;
+  }
+  return moved;
+}
+
+// alloc, and if the bank has enough free units in total but no contiguous run,
+// defragment it first.
+static uint8_t alloc_defrag(uint8_t bank, uint8_t units) {
+  uint8_t idx = alloc(bank, units);
+  if (idx != 0xFF)
+    return idx;
+  if (mos_cache_free_units(bank) >= units && defrag(bank))
+    idx = alloc(bank, units);
+  return idx;
+}
+
+static uint8_t sh_want; // bank 0 was too small for a request (shared mode)
+
+// Find room for `size` bytes, preferring `first` bank:
+//  0. free space in the preferred bank, then the other;
+//  1. defragment a bank that has enough free units in total;
+//  2. only then make room: spill an unlocked object to the other bank
+//  (lossless)
+//     or evict the oldest cold module, defragmenting whenever the freed total
+//     is enough, until it fits.
+// A FEASIBILITY check runs first: a request larger than the longest run not
+// held by pinned items in every allowed bank is refused up front, with no
+// spills, evictions or moves. Returns the unit index (or 0xFF) and sets
+// *bank_out. `only` = 0xFF means either bank, else that bank only.
+static uint8_t place(uint8_t first, uint8_t only, uint16_t size,
+                     uint8_t *bank_out) {
+  uint8_t k, bank = 0, idx = 0xFF, ok[2], units[2];
+  ensure_bank1();
+  for (k = 0; k < 2; k++) {
+    units[k] = units_of(k, size);
+    ok[k] = (only == 0xFF || only == k) && units[k] <= pool_units[k] &&
+            max_gap(k) >= units[k];
+  }
+  *bank_out = 0;
+  if (!ok[0] && !ok[1]) {
+    mos_cache_stats.place_refused++;
+    return 0xFF;
+  }
+  for (k = 0; k < 2 && idx == 0xFF; k++) { // pass 0
+    bank = k ? !first : first;
+    if (ok[bank])
+      idx = alloc(bank, units[bank]);
+    if (idx == 0xFF && bank == 0)
+      sh_want = 1; // bank 0 was full: wants to grow (shared mode)
+  }
+  for (k = 0; k < 2 && idx == 0xFF; k++) { // pass 1: defragment
+    bank = k ? !first : first;
+    if (ok[bank])
+      idx = alloc_defrag(bank, units[bank]);
+  }
+  for (k = 0; k < 2 && idx == 0xFF; k++) { // pass 2: spill / evict
+    bank = k ? !first : first;
+    if (!ok[bank])
+      continue;
+    for (;;) {
+      uint8_t victim;
+      idx = alloc_defrag(bank, units[bank]);
+      if (idx != 0xFF)
+        break;
+      if (spill_one(bank))
+        continue; // lossless: move an object across
+      victim = find_victim(bank);
+      if (victim == 0xFF)
+        break;
+      mos_cache_module_evict(victim);
+    }
+  }
+  *bank_out = bank;
+  return idx;
+}
+
+uint8_t mos_cache_module_load(uint8_t id, uint8_t caller_bank) {
+  uint16_t size = __mos_mt_size[id];
+  uint8_t bank = 0, idx;
+  poll_point();
+  idx = place(caller_bank ? 1 : 0, 0xFF, size, &bank);
+  if (idx == 0xFF)
+    return 1;
+  {
+    uint16_t dest = unit_addr(bank, idx);
+    if (bank)
+      c128_bank1_write(dest, (const void *)__mos_mt_img[id], size);
+    else
+      memcpy((void *)dest, (const void *)__mos_mt_img[id], size);
+    apply_relocs(bank, dest, __mos_mt_reloc[id],
+                 (uint16_t)(dest - __mos_mt_img[id]));
+    __mos_mt_addr[id] = dest;
+    __mos_mt_cr[id] = bank ? 0x4E : 0x0E;
+  }
+  __mos_mt_stamp[id] = ++stamp_clock;
+  mos_cache_stats.mod_loads++;
+  return 0;
+}
+
+mos_handle_t mos_cacheable_malloc(uint16_t size) {
+  uint8_t h, bank = 0, idx;
+  poll_point();
+  for (h = 0; h < NOBJ && ho[h].used; h++) {
+  }
+  if (h == NOBJ || !size)
+    return 0;
+  idx = place(0, 0xFF, size, &bank);
+  if (idx == 0xFF)
+    return 0;
+  ho[h].addr = unit_addr(bank, idx);
+  ho[h].size = size;
+  ho[h].bank = bank;
+  ho[h].lock = 0;
+  ho[h].used = 1;
+  ho[h].stamp = ++ostamp;
+  return h + 1;
+}
+
+uint8_t mos_cacheable_free(mos_handle_t handle) {
+  if (!handle || handle > NOBJ || !ho[handle - 1].used)
+    return 2;
+  if (ho[handle - 1].lock)
+    return 1;
+  release(ho[handle - 1].bank,
+          unit_of(ho[handle - 1].bank, ho[handle - 1].addr),
+          units_of(ho[handle - 1].bank, ho[handle - 1].size));
+  ho[handle - 1].used = 0;
+  return 0;
+}
+
+// mos_handle_lock cannot switch $FF00 and hand back a bank-1 pointer: the
+// caller's own code (ordinary bank-0 RAM, not Common RAM) would vanish. Instead
+// a lock makes the object resident in the CALLER'S OWN bank, migrating it
+// through the Common-RAM staging routines if it is in the other one; no bank
+// switch is held across caller code. A lock held by one bank's code pins the
+// object there, so the other bank's lock attempt fails (NULL).
+void *mos_cache_lock_in(mos_handle_t handle, uint8_t caller_bank) {
+  uint8_t units, idx, nb = 0;
+  uint16_t dst;
+  poll_point();
+  if (!handle || handle > NOBJ || !ho[handle - 1].used)
+    return 0;
+  if (ho[handle - 1].bank != caller_bank) {
+    uint8_t from = ho[handle - 1].bank;
+    if (ho[handle - 1].lock)
+      return 0;
+    idx = place(caller_bank, caller_bank, ho[handle - 1].size, &nb);
+    if (idx == 0xFF)
+      return 0;
+    dst = unit_addr(caller_bank, idx);
+    xcopy(caller_bank, dst, from, ho[handle - 1].addr, ho[handle - 1].size);
+    units = units_of(from, ho[handle - 1].size);
+    release(from, unit_of(from, ho[handle - 1].addr), units);
+    ho[handle - 1].addr = dst;
+    ho[handle - 1].bank = caller_bank;
+  }
+  ho[handle - 1].lock++;
+  ho[handle - 1].stamp = ++ostamp;
+  return (void *)ho[handle - 1].addr;
+}
+
+void *mos_handle_lock(mos_handle_t handle) {
+  return mos_cache_lock_in(handle, 0);
+}
+
+void mos_handle_unlock(mos_handle_t handle) {
+  if (handle && handle <= NOBJ && ho[handle - 1].lock)
+    ho[handle - 1].lock--;
+}
+
+// Defragment both banks' pools; returns the number of items moved. Active
+// modules and locked objects are never moved.
+uint8_t mos_defrag(void) {
+  ensure_bank1();
+  return defrag(0) + defrag(1);
+}
+
+uint8_t mos_cache_pool_units(uint8_t bank) {
+  if (bank)
+    ensure_bank1();
+  return pool_units[bank];
+}
+uint16_t mos_cache_pool_base(uint8_t bank) {
+  if (bank)
+    ensure_bank1();
+  return pool_base[bank];
+}
+uint8_t mos_handle_bank(mos_handle_t handle) { return ho[handle - 1].bank; }
+uint8_t mos_handle_locks(mos_handle_t handle) { return ho[handle - 1].lock; }
+
+// ---- Shared mode: bank 0's pool is a block of the ordinary malloc heap
+// -------
+//  Stage 1 (polling): mos_cache_service(), called at safe points, keeps the
+//    heap's free bytes between two watermarks - it gives pool tail back when
+//    the heap runs low and takes it again when there is plenty and the cache is
+//    short of bank-0 room.
+//  Stage 2 (reclaim): __malloc_low_memory, called by malloc itself when a
+//    request cannot be satisfied, makes the cache give back what is needed
+//    right now. It does NO I/O and calls no allocator entry other than
+//    realloc-shrink, which never allocates: it spills objects to bank 1, drops
+//    cold modules and shrinks the pool block in place. Whatever is not cheap to
+//    give up in that way (disk demotion of dirty items) is done at the polling
+//    safe points, never here.
+
+size_t __heap_bytes_free(void);
+
+static uint8_t sh_min, sh_max, sh_busy;
+static uint16_t sh_low, sh_high; // free-byte watermarks of the malloc heap
+
+// Default (weak) tier extension points: nothing to demote to, nothing to write.
+__attribute__((weak)) uint8_t mos_tier_demote(uint8_t bank) {
+  (void)bank;
+  return 0;
+}
+__attribute__((weak)) void mos_tier_writebehind(void) {}
+
+// True if any active module or locked object is in bank 0's pool: it cannot
+// move, so the pool block must not be moved either.
+static uint8_t pool0_pinned(void) {
+  uint8_t id;
+  for (id = 0; id < NMODS; id++)
+    if (MOD_RESIDENT(id) && __mos_mt_active[id] && !MOD_IN_BANK1(id))
+      return 1;
+  for (id = 0; id < NOBJ; id++)
+    if (ho[id].used && ho[id].lock && !ho[id].bank)
+      return 1;
+  return 0;
+}
+
+static uint8_t used_top(void) { // highest used unit of bank 0, plus one
+  uint8_t u = pool_units[0];
+  while (u && !bit_used(0, u - 1))
+    u--;
+  return u;
+}
+
+// Give up to `want` units of bank 0's pool tail back to the heap; returns the
+// number given. Never goes below sh_min units.
+static uint8_t pool0_yield(uint8_t want) {
+  uint8_t given = 0;
+  sh_busy = 1;
+  while (given < want && pool_units[0] > sh_min) {
+    uint8_t top = used_top(), lowest = top > sh_min ? top : sh_min, room, n,
+            victim;
+    room = pool_units[0] - lowest;
+    if (!room &&
+        mos_cache_free_units(0)) { // free units exist, but not at the end
+      defrag(0);
+      top = used_top();
+      lowest = top > sh_min ? top : sh_min;
+      room = pool_units[0] - lowest;
+    }
+    if (!room) {        // make some: cheapest first
+      if (spill_one(0)) // object -> bank 1 (lossless)
+        continue;
+      if (mos_tier_demote(0)) // object -> REU (when it exists)
+        continue;
+      victim = find_victim(0); // clean module: just drop it
+      if (victim == 0xFF)
+        break; // only pinned items are left
+      mos_cache_module_evict(victim);
+      continue;
+    }
+    n = (uint8_t)(want - given);
+    if (n > room)
+      n = room;
+    // Shrinking never moves the block.
+    if (realloc((void *)pool_base[0], (uint16_t)(pool_units[0] - n)
+                                          << BANK0_SHIFT) !=
+        (void *)pool_base[0])
+      break;
+    pool_units[0] -= n;
+    given += n;
+    mos_cache_stats.yielded_units += n;
+  }
+  sh_busy = 0;
+  return given;
+}
+
+// Take `add` more units for bank 0's pool from the heap. The block may have to
+// move, so this is refused while anything in bank 0 is pinned; when it does
+// move, every resident module in it is relocated by the move delta and every
+// object's address adjusted (handles do not change).
+static uint8_t pool0_grow(uint8_t add) {
+  uint8_t cur = pool_units[0], id;
+  uint8_t *np;
+  uint16_t old = pool_base[0], delta;
+  if (!add || (uint16_t)cur + add > sh_max || pool0_pinned())
+    return 0;
+  sh_busy = 1;
+  np = realloc((void *)old, (uint16_t)(cur + add) << BANK0_SHIFT);
+  sh_busy = 0;
+  if (!np)
+    return 0;
+  if ((uint16_t)np != old) {
+    delta = (uint16_t)np - old;
+    for (id = 0; id < NMODS; id++) {
+      if (!MOD_RESIDENT(id) || MOD_IN_BANK1(id))
+        continue;
+      __mos_mt_addr[id] += delta;
+      apply_relocs(0, __mos_mt_addr[id], __mos_mt_reloc[id], delta);
+    }
+    for (id = 0; id < NOBJ; id++)
+      if (ho[id].used && !ho[id].bank)
+        ho[id].addr += delta;
+    pool_base[0] = (uint16_t)np;
+    mos_cache_stats.pool_moves++;
+  }
+  pool_units[0] = cur + add;
+  mos_cache_stats.grown_units += add;
+  return add;
+}
+
+uint8_t mos_cache_shared(uint8_t min_units, uint8_t init_units,
+                         uint8_t max_units, uint16_t low, uint16_t high) {
+  uint8_t *p;
+  if (pool_base[0] || !min_units || min_units > init_units ||
+      init_units > max_units || max_units > MAX_UNITS)
+    return 1;
+  sh_busy = 1;
+  p = malloc((uint16_t)init_units << BANK0_SHIFT);
+  sh_busy = 0;
+  if (!p)
+    return 2;
+  pool_base[0] = (uint16_t)p;
+  pool_units[0] = init_units;
+  sh_min = min_units;
+  sh_max = max_units;
+  sh_low = low;
+  sh_high = high;
+  shared = 1;
+  return 0;
+}
+
+uint8_t mos_cache_service(void) {
+  size_t free;
+  uint8_t changed = 0;
+  mos_cache_stats.services++;
+  if (!shared || sh_busy)
+    return 0;
+  free = __heap_bytes_free();
+  if (free < sh_low) {
+    size_t need = sh_low - free;
+    changed = pool0_yield((uint8_t)(need / 32 + 1)) != 0;
+  } else if (sh_want && free > sh_high) {
+    size_t spare = (free - sh_high) / 32;
+    uint8_t add = spare > 4 ? 4 : (uint8_t)spare; // a few units per call
+    if (add > sh_max - pool_units[0])
+      add = sh_max - pool_units[0];
+    changed = pool0_grow(add) != 0;
+    if (!add || pool_units[0] == sh_max)
+      sh_want = 0;
+  }
+  mos_tier_writebehind();
+  return changed;
+}
+
+// Automatic polling: the safe points of the runtime (a module load, allocating
+// an object, locking one) call poll_point(), which runs mos_cache_service every
+// `every`th time. The gate's hit path is not a safe point and is unchanged. A
+// module's own code being active only pins the pool: growth is refused,
+// yielding is not.
+static uint8_t sh_every, sh_tick;
+void mos_cache_auto_poll(uint8_t every) {
+  sh_every = every;
+  sh_tick = 0;
+}
+static void poll_point(void) {
+  if (sh_every && ++sh_tick >= sh_every) {
+    sh_tick = 0;
+    mos_cache_service();
+  }
+}
+
+// Stage 2: malloc found nothing that fits `needed` bytes (chunk size). Yield
+// enough of the pool to fit it, if possible; no I/O (see above).
+int __malloc_low_memory(size_t needed) {
+  size_t units = needed / 32 + 1;
+  mos_cache_stats.hook_calls++;
+  if (!shared || sh_busy)
+    return 0;
+  return pool0_yield(units > 255 ? 255 : (uint8_t)units) != 0;
+}

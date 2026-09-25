@@ -114,10 +114,10 @@ void __c128bank1_load(void) {
 }
 
 // Run-time copies between bank 0 and bank 1 (declared in bank1.h, which
-// cannot be included when the platform library itself is built), staged through the same
-// Common-RAM scratch buffer (so using them costs no zero page beyond the 16
-// bytes bank-1 placement already costs). The bank-1 side is an address, not a
-// pointer: see bank1.h.
+// cannot be included when the platform library itself is built), staged through
+// the same Common-RAM scratch buffer (so using them costs no zero page beyond
+// the 16 bytes bank-1 placement already costs). The bank-1 side is an address,
+// not a pointer: see bank1.h.
 void c128_bank1_write(unsigned short bank1_dest, const void *src,
                       unsigned short size) {
   c128bank1_copy_region((char *)bank1_dest, (const char *)src, size);

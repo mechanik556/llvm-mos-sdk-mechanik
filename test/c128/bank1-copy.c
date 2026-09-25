@@ -11,8 +11,8 @@
 extern char __c128bank1_free_start[];
 extern char __c128bank1_free_end[];
 
-MOS_C128_BANK1_DATA static volatile unsigned char placed[40] = {
-    9, 8, 7, 6, 5, 4, 3, 2, 1, 0};
+MOS_C128_BANK1_DATA static volatile unsigned char placed[40] = {9, 8, 7, 6, 5,
+                                                                4, 3, 2, 1, 0};
 
 static unsigned char src[300], dst[320], probe[300];
 

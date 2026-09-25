@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.18)
 
-project(test-c128 LANGUAGES C CXX)
+project(test-c128 LANGUAGES C CXX ASM)
 
 include(../test.cmake)
 
@@ -15,6 +15,10 @@ add_vice_test(bank1-call-rs232-area SOURCE bank1-call.c
   LINK_OPTIONS -Wl,--defsym=__c128_common_code_origin=0x0C00)
 add_vice_test(bank1-state)
 add_vice_test(bank1-copy)
+add_vice_test(cache-objects)
+add_vice_test(cache-shared)
+add_vice_test(cache-tiers)
+add_vice_test(cache-modules EXTRA_SOURCES cache-modules.s)
 add_vice_test(bank1-isolation)
 add_vice_test(bank1-rcr)
 add_vice_test(bank1-malloc)

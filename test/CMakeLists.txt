@@ -24,6 +24,7 @@ function(add_test_target target)
       -DLIBRETRO_VICE_X64SC_CORE=${LIBRETRO_VICE_X64SC_CORE}
       -DCMAKE_C_FLAGS=${config_flag}
       -DCMAKE_CXX_FLAGS=${config_flag}
+      -DCMAKE_ASM_FLAGS=${config_flag}
       -DCMAKE_TOOLCHAIN_FILE=${CMAKE_SOURCE_DIR}/cmake/llvm-mos-toolchain.cmake
     INSTALL_COMMAND ""
     BUILD_ALWAYS On

@@ -11,6 +11,7 @@ install(FILES
   ../c64/_vic2.h
   c128.h
   bank1.h
+  cache.h
   ../c64/charset.h
 TYPE INCLUDE)
 install(FILES link.ld TYPE LIB)
@@ -33,6 +34,8 @@ add_platform_library(c128-c
   kernal.S
   bank1.s
   bank1-load.c
+  cache.c
+  cache-gate.s
 )
 target_include_directories(c128-c BEFORE PUBLIC .)
 target_include_directories(c128-c BEFORE PUBLIC ../c64)
