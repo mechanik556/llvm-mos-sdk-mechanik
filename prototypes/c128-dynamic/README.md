@@ -1,12 +1,13 @@
 # C128 dynamic module prototype (not part of the SDK)
 
-Working prototype of runtime-loaded, relocatable code modules and cacheable heap
-objects across the C128's two RAM banks (milestone M0.2 of the dynamic-linking
-work; see `work/M0_C128_BANKING_PLAN.md` in llvm-mos-mechanik). It is a proof of
-the design, not shippable library code: it is hand-authored assembly plus a C
-allocator, it needs `-mlto-zp=70` to leave zero page for the gate, and nothing
-in `mos-platform` depends on it. It lives here, outside `test/`, so the SDK's
-test tree contains only tests.
+Module-level tests for the C128 runtime (milestone M0.2), kept from the original
+proof of the design (see `work/M0_C128_BANKING_PLAN.md` in llvm-mos-mechanik). The
+runtime they exercise now lives in the SDK (`mos-platform/c128`, milestone M0.3);
+what stays here is hand-authored assembly test modules and drivers that inspect
+the runtime's internal state, so they are not part of `test/`, which contains only
+self-checking tests. Nothing in `mos-platform` depends on this directory. The
+drivers are built with `-mlto-zp=60`, which leaves room for the gate's zero page
+(the SDK tests use `-mreserve-zp=29`, see `cache.h`).
 
 * `m0_2/modules.s` - hand-written test modules and their module table
 * `m0_2/compat.{h,c}` - map the tests' old names onto the SDK runtime and set up
