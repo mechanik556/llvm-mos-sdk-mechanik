@@ -1,0 +1,99 @@
+# Fork-only CI: builds the SDK on Ubuntu and runs the C64/C128 emulator tests,
+# including the desktop-VICE ones (test/vice-runner.py) that need VICE's
+# monitor. No release, Pages or dispatch steps: it only builds and tests.
+# Lives on the ci-fork branch, not on the branches proposed upstream.
+name: Fork C128 tests
+env:
+  TEST_TOOLS_DIR: ${{ github.workspace }}/tt
+  EMUTEST_DIR: ${{ github.workspace }}/tt/emutest
+  LIBRETRO_CORES_DIR: ${{ github.workspace }}/tt/libretro
+  VICE_DIR: ${{ github.workspace }}/tt/vice
+on:
+  push:
+    branches: [ ci-fork ]
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - name: Check out the SDK.
+        uses: actions/checkout@v4
+
+      - name: Cache test tools
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.TEST_TOOLS_DIR }}
+          key: fork-test-tools-${{ hashFiles('.github/workflows/fork-c128-tests.yml') }}
+
+      - name: Set up Go
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      - name: Build Emutest binary
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/sehugg/emutest
+          cd emutest
+          go install
+          mkdir -p ${{ env.EMUTEST_DIR }}
+          cp $(go env GOPATH)/bin/emutest ${{ env.EMUTEST_DIR }}
+      # Same pinned commit and steps as package.yml.
+      - name: Build VICE x128 and x64sc libretro cores
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/libretro/vice-libretro
+          cd vice-libretro
+          git checkout 9d7983826ea792f6cce7fdfe6c09488129c6f886
+          make --silent -j 4 EMUTYPE=x128
+          mkdir -p ${{ env.LIBRETRO_CORES_DIR }}
+          mv vice_x128_libretro.so ${{ env.LIBRETRO_CORES_DIR }}
+          make objectclean EMUTYPE=x128
+          make --silent -j 4 EMUTYPE=x64sc
+          mv vice_x64sc_libretro.so ${{ env.LIBRETRO_CORES_DIR }}
+      - name: Build VICE 3.10 (desktop, headless)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install build-essential flex bison xa65 dos2unix pkg-config
+          curl -fL --retry 3 -o vice.tar.gz https://downloads.sourceforge.net/project/vice-emu/releases/vice-3.10.tar.gz
+          echo "8e5bac18cbcb9f192380ad3ef881f8790f5b75c41d7b3da65d831985d864d6d1  vice.tar.gz" | sha256sum -c -
+          tar xzf vice.tar.gz
+          cd vice-3.10
+          ./configure --prefix=${{ env.VICE_DIR }} --enable-headlessui --disable-html-docs --without-pulse --without-alsa --without-png --without-libcurl
+          make -j 4
+          make install
+
+      - name: Install build dependencies.
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install ninja-build
+      - name: Fetch the latest Ubuntu llvm-mos release.
+        run: |
+          curl -fLO https://github.com/llvm-mos/llvm-mos/releases/download/llvm-mos-linux-main/llvm-mos-linux-main.tar.xz
+          tar -xf llvm-mos-linux-main.tar.xz
+      - name: Build the SDK.
+        run: |
+          mkdir build
+          cd build
+          cmake -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/llvm-mos -G "Ninja" ..
+          ninja install
+
+      - name: Test the C128 platform.
+        run: |
+          cd build
+          CTEST_OUTPUT_ON_FAILURE=1 ninja test-c128
+      - name: Test the C64 platform.
+        if: always()
+        run: |
+          cd build
+          CTEST_OUTPUT_ON_FAILURE=1 ninja test-c64
+
+      - name: Upload test screenshots.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-screenshots
+          path: build/**/*.png
