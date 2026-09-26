@@ -72,7 +72,7 @@ r_target_a:
 r_target_b:
 	lda #2
 	rts
-r_try_evict:                     ; ask the host to evict R itself: refused, R is active
+r_try_evict:                     ; ask the host to evict R itself: refused
 	lda #2
 	CALL 5, 0
 	rts
@@ -149,7 +149,8 @@ modR_reloc:
 	.section .rodata.mt,"a",@progbits
 .globl __mos_mt_count, __mos_mt_img, __mos_mt_size, __mos_mt_reloc
 __mos_mt_count: .byte 6
-__mos_mt_img:   .word modA_start, modB_start, modR_start, modF_start, modG_start, 0
+__mos_mt_img:   .word modA_start, modB_start, modR_start, modF_start
+                .word modG_start, 0
 __mos_mt_size:  .word 32, 96, 96, 64, 64, 0
 __mos_mt_reloc: .word noreloc, noreloc, modR_reloc, noreloc, noreloc, noreloc
 
@@ -163,7 +164,8 @@ __mos_mt_stamp:  .fill 12
 
 ; C-callable stubs (arguments and results in A).
 	.section .text.stubs,"ax",@progbits
-.globl m_add1, m_cb, m_add7, m_r_entry, m_r_viaptr, m_r_lohi, m_r_call_sm, m_r_sm_to_b
+.globl m_add1, m_cb, m_add7, m_r_entry, m_r_viaptr, m_r_lohi
+.globl m_r_call_sm, m_r_sm_to_b
 .globl m_r_try_evict, m_g_incr, m_no_such_module
 m_add1:
 	CALL 0, fa_add1 - modA_start
@@ -198,7 +200,7 @@ m_no_such_module:                ; the gate reports failure: carry set, A = 3
 	lda #0
 	rts
 1:	rts
-m_g_incr:                        ; A = handle; returns 0, or 1 if the lock was refused
+m_g_incr:                        ; A = handle; 0, or 1 if the lock is refused
 	CALL 4, g_incr - modG_start
 	bcs 1f
 	lda #0

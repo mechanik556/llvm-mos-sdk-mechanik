@@ -95,7 +95,7 @@ extern "C" {
 /// A handle to a cacheable object. 0 is the null handle.
 typedef uint16_t mos_cache_handle_t;
 
-// ---- Result codes -------------------------------------------------------------
+// ---- Result codes -----------------------------------------------------------
 
 /// Every function that reports a status returns MOS_CACHE_OK (0) on success.
 #define MOS_CACHE_OK 0
