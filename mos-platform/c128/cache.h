@@ -57,7 +57,7 @@
 // nothing. The call gate adds about 240 bytes to the Common-RAM code area (512
 // bytes by default, of which bank-1 support itself uses about 60).
 //
-// RAM. The runtime's own data is about 550 bytes: the object table (288), and
+// RAM. The runtime's own data is about 500 bytes: the object table (256), and
 // the allocation maps (32 for bank 0 and 192 for bank 1, sized for the largest
 // pool, though the default 256-byte units need 22) plus a little state.
 //
