@@ -101,6 +101,30 @@
 // * Using bank 1 costs 16 bytes of the zero-page pool: the startup copy
 //   stages its data through a zero-page buffer (the only ordinary variable
 //   storage that is Common RAM).
+//
+// Common RAM left for the program. Common RAM is the 4K window $0000-$0FFF;
+// most of it is the C128's own workspace:
+//
+//   $0000-$03FF  zero page, stack, KERNAL workspace: the program keeps only
+//                its zero-page pool (102 bytes, shared with the compiler;
+//                86 after the 16 bytes above)
+//   $0400-$07FF  text screen and sprite pointers: in use while the KERNAL
+//                console is
+//   $0800-$09FF  512 bytes of Common-RAM code area (above): 59 used by
+//                c128_bank1_call and the copy routine, so 453 left
+//   $0A00-$0AFF  system vectors and editor variables: not usable
+//   $0B00-$0BBF  192 bytes, free unless the program uses tape
+//   $0C00-$0DFF  512 bytes, free unless the program uses RS-232
+//   $0E00-$0FFF  512 bytes, free unless the program uses sprites
+//
+// So 2304 of the 4096 bytes are the system's and, using no tape, RS-232 or
+// sprites, the program can have about 1.7K of the rest (with the cache
+// runtime's call gate in the $0800 area, about 1.4K: see cache.h). Only the
+// $0800 area is available without configuration, for code (the program's own
+// Common-RAM code goes in a section named .c128commoncode.*). To use $0B00,
+// $0C00 or $0E00, move the code area there with the --defsym above, or add a
+// linker region of your own. The figures for $0B00-$0FFF come from the C128
+// documentation, not from a test that fills them.
 
 #ifndef _C128_BANK1_H
 #define _C128_BANK1_H

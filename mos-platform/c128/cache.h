@@ -55,7 +55,11 @@
 // code area at $0800 (saved at startup and restored at exit, see bank1.h) and a
 // 16-byte staging buffer in zero page. Programs that do not use the runtime pay
 // nothing. The call gate adds about 240 bytes to the Common-RAM code area (512
-// bytes by default, of which bank-1 support itself uses about 60).
+// bytes by default, of which bank-1 support itself uses about 60). What is left
+// of the 512 bytes: about 450 without the gate, about 210 with it (300 used).
+// A program that uses the runtime but no compiled modules links only the copy
+// routine (28 bytes), leaving about 480. bank1.h lists all of Common RAM and
+// what the program can have of it (about 1.4K with the gate).
 //
 // RAM. The runtime's own data is about 330 bytes: the object table (256), the
 // two allocation maps (31 bytes each) and a little state; the wide build (see
