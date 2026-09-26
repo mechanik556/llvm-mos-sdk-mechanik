@@ -46,7 +46,7 @@ int main(void) {
   CHECK(fill(a, 100, 1) && fill(b, 64, 2) && fill(c, 65, 3));
   CHECK(check(a, 100, 1) && check(b, 64, 2) && check(c, 65, 3));
 
-  /* in bank 1 the unit is 32 bytes: a 40-byte object takes two */
+  /* in bank 1 the unit is 32 bytes: 200 bytes take seven */
   free1 = mos_cache_free_units(1);
   {
     mos_cache_handle_t d = mos_cache_malloc(200); /* does not fit bank 0 */

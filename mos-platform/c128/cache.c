@@ -228,8 +228,8 @@ uint8_t mos_cache_units(uint8_t bank0_shift, uint8_t bank1_shift) {
 
 uint8_t mos_cache_bank1(uint16_t base, uint16_t units, uint8_t unit_shift) {
   uint32_t end = (uint32_t)base + ((uint32_t)units << unit_shift);
-  if (unit_shift < MIN_SHIFT || unit_shift > MAX_SHIFT || units > MAX_UNITS ||
-      bank1_ready)
+  if (unit_shift < MIN_SHIFT || unit_shift > MAX_SHIFT || !units ||
+      units > MAX_UNITS || bank1_ready)
     return MOS_CACHE_BAD_ARGUMENT;
   // Bank 1's $0000-$0FFF is Common RAM, the same memory as bank 0's, and
   // KERNAL ROM and I/O start at $C000: the pool must lie between them.
@@ -243,8 +243,9 @@ uint8_t mos_cache_bank1(uint16_t base, uint16_t units, uint8_t unit_shift) {
 }
 
 uint8_t mos_cache_static(void *pool, uint8_t units) {
+  // The pool must fit in the address space without wrapping past $FFFF.
   if (!pool || !units || units > MAX_BANK0_UNITS || pool_base[0] ||
-      ((uint32_t)units << pool_shift[0]) > 0xFFFF)
+      (uint32_t)(uint16_t)pool + ((uint32_t)units << pool_shift[0]) > 0x10000L)
     return MOS_CACHE_BAD_ARGUMENT;
   pool_base[0] = (uint16_t)pool;
   pool_units[0] = units;
@@ -467,7 +468,7 @@ static uint8_t any_pinned(uint8_t bank) {
 
 static unit_t max_gap(uint8_t bank) {
   uint8_t pin[(MAX_UNITS + 7) / 8], id;
-  unit_t s, n;
+  unit_t s, n, count;
   if (!any_pinned(bank)) // the common case: no need to build the pin map
     return pool_units[bank];
   memset(pin, 0, (pool_units[bank] + 7) / 8);
@@ -475,14 +476,16 @@ static unit_t max_gap(uint8_t bank) {
     if (!MOD_RESIDENT(id) || !__mos_mt_active[id] || MOD_IN_BANK1(id) != bank)
       continue;
     s = unit_of(bank, __mos_mt_addr[id]);
-    for (n = 0; n < units_of(bank, __mos_mt_size[id]); n++)
+    count = units_of(bank, __mos_mt_size[id]);
+    for (n = 0; n < count; n++)
       pin[(s + n) >> 3] |= 1 << ((s + n) & 7);
   }
   for (id = 0; id < NOBJ; id++) {
     if (!ho[id].used || !ho[id].lock || ho[id].bank != bank)
       continue;
     s = unit_of(bank, ho[id].addr);
-    for (n = 0; n < units_of(bank, ho[id].size); n++)
+    count = units_of(bank, ho[id].size);
+    for (n = 0; n < count; n++)
       pin[(s + n) >> 3] |= 1 << ((s + n) & 7);
   }
   return longest_clear_run(pin, pool_units[bank]);

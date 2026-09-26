@@ -30,6 +30,10 @@ int main(void) {
         MOS_CACHE_BAD_ARGUMENT);        /* unit size */
   CHECK(mos_cache_pool_units(1) > 100); /* still the default pool */
 
+  /* bank 0's pool must be non-empty and must not wrap past $FFFF */
+  CHECK(mos_cache_static(pool0, 0) == MOS_CACHE_BAD_ARGUMENT);
+  CHECK(mos_cache_static((void *)0xFFC0, 5) == MOS_CACHE_BAD_ARGUMENT);
+  CHECK(mos_cache_bank1(0x2000, 0, 5) == MOS_CACHE_BAD_ARGUMENT); /* empty */
   CHECK(mos_cache_static(pool0, 5) == MOS_CACHE_OK);
   CHECK(mos_cache_static(pool0, 5) == MOS_CACHE_BAD_ARGUMENT); /* only once */
   CHECK(mos_cache_pool_units(0) == 5);

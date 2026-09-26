@@ -57,6 +57,10 @@
 // nothing. The call gate adds about 240 bytes to the Common-RAM code area (512
 // bytes by default, of which bank-1 support itself uses about 60).
 //
+// RAM. The runtime's own data is about 550 bytes: the object table (288), and
+// the allocation maps (32 for bank 0 and 192 for bank 1, sized for the largest
+// pool, though the default 256-byte units need 22) plus a little state.
+//
 // Zero page. The call gate (linked only by programs that use it) costs 13 more
 // bytes. The zero-page pool is about 102 bytes shared with the compiler's own
 // use (-mlto-zp=102 in the platform configuration), and the compiler does not
@@ -76,15 +80,16 @@
 //    with a 6-byte minimum block; nothing on these machines needs bigger
 //    units).
 //  - Bank 1 is roomy (about 44 KB) and is the tier next to the REU and the
-//  disk,
-//    whose natural units are pages and sectors: C64 OS allocates memory in
-//    256-byte pages, a 1541 sector holds 254 bytes of data (256 raw), REU
-//    transfers are addressed in pages. 256-byte units keep the allocation map
-//    at 22 bytes and make later demotion whole-page. A program that keeps many
-//    small objects in bank 1 (less than a page each) can ask for 32 or 64.
-// This choice rests on how the C64 and C128 ecosystem lays out memory, not on
-// measured object-size histograms, which no open-source C64/C128 program that
-// we found publishes; the tests and the M0 design notes record the sources.
+//    disk, whose natural units are pages and sectors: C64 OS allocates memory
+//    in 256-byte pages, a 1541 sector holds 254 bytes of data (256 raw), and
+//    the planned REU tier allocates 256-byte pages. 256-byte units keep the
+//    allocation map at 22 bytes and make later demotion whole-page. A program
+//    that keeps many small objects in bank 1 (less than a page each) can ask
+//    for 32 or 64.
+// This choice rests on how the C64 and C128 ecosystem lays out memory (cc65's
+// heap, C64 OS's memory manager, the Commodore disk format), not on measured
+// object-size histograms, which no open-source C64/C128 program is known to
+// publish.
 //
 // Limits. At most 32 objects live at once; bank 0's pool has at most 254 units
 // and bank 1's at most 1536; the gate nests at most 16 module calls deep; the
