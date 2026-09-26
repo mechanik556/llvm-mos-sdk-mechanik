@@ -40,6 +40,11 @@ add_platform_library(c128-c
   cache-host.c
   cache-host.s
 )
+# The cache runtime is the memory manager of a machine with very little memory:
+# optimize it for the smallest code (-Oz), which is a little smaller than the
+# SDK's default -Os for this code.
+set_source_files_properties(cache.c cache-host.c cache-nomodules.c bank1-load.c
+  PROPERTIES COMPILE_OPTIONS -Oz)
 target_include_directories(c128-c BEFORE PUBLIC .)
 # The platform library is built without the platform's clang config, so it does
 # not get this from there; the headers it shares with user code insist on it.

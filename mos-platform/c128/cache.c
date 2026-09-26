@@ -74,7 +74,6 @@ static unit_t pool_free[2]; // free units in each pool, kept by mark()
 static uint8_t pool_shift[2] = {DEFAULT_BANK0_SHIFT, DEFAULT_BANK1_SHIFT};
 static uint8_t bitmap0[(MAX_BANK0_UNITS + 7) / 8];
 static uint8_t bitmap1[(MAX_UNITS + 7) / 8];
-static uint8_t *const bitmap[2] = {bitmap0, bitmap1};
 static uint8_t bank1_ready;
 static uint8_t shared; // bank 0's pool is a block of the malloc heap
 static uint16_t stamp_clock;
@@ -88,18 +87,21 @@ struct mos_cache_stats mos_cache_stats;
 
 static const uint8_t bit_of[8] = {1, 2, 4, 8, 16, 32, 64, 128};
 
+static uint8_t *bm(uint8_t bank) { return bank ? bitmap1 : bitmap0; }
+
 static uint8_t bit_used(uint8_t bank, unit_t u) {
-  return bitmap[bank][u >> 3] & bit_of[u & 7];
+  return bm(bank)[(uint8_t)(u >> 3)] & bit_of[u & 7];
 }
 
 // Mark `units` units from `start` used (1) or free (0).
 static void mark(uint8_t bank, unit_t start, unit_t units, uint8_t used) {
-  unit_t k;
-  for (k = start; k < start + units; k++) {
+  uint8_t *b = bm(bank);
+  unit_t k, end = start + units;
+  for (k = start; k < end; k++) {
     if (used)
-      bitmap[bank][k >> 3] |= bit_of[k & 7];
+      b[(uint8_t)(k >> 3)] |= bit_of[k & 7];
     else
-      bitmap[bank][k >> 3] &= ~bit_of[k & 7];
+      b[(uint8_t)(k >> 3)] &= ~bit_of[k & 7];
   }
   if (used)
     pool_free[bank] -= units;
@@ -135,7 +137,7 @@ static NOINLINE unit_t alloc(uint8_t bank, unit_t units) {
   if (units == NO_UNIT)
     return NO_UNIT;
   while (u < n) {
-    if (!(u & 7) && bitmap[bank][u >> 3] == 0xFF) {
+    if (!(u & 7) && bm(bank)[(uint8_t)(u >> 3)] == 0xFF) {
       run = 0;
       u += 8;
       continue;
