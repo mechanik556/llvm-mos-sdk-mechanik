@@ -577,7 +577,7 @@ uint8_t mos_cache_module_load(uint8_t id, uint8_t caller_bank) {
   return 0;
 }
 
-mos_handle_t mos_cacheable_malloc(uint16_t size) {
+mos_cache_handle_t mos_cache_malloc(uint16_t size) {
   uint8_t h, bank = 0, idx;
   poll_point();
   for (h = 0; h < NOBJ && ho[h].used; h++) {
@@ -596,7 +596,7 @@ mos_handle_t mos_cacheable_malloc(uint16_t size) {
   return h + 1;
 }
 
-uint8_t mos_cacheable_free(mos_handle_t handle) {
+uint8_t mos_cache_free(mos_cache_handle_t handle) {
   if (!handle || handle > NOBJ || !ho[handle - 1].used)
     return 2;
   if (ho[handle - 1].lock)
@@ -608,13 +608,13 @@ uint8_t mos_cacheable_free(mos_handle_t handle) {
   return 0;
 }
 
-// mos_handle_lock cannot switch $FF00 and hand back a bank-1 pointer: the
+// mos_cache_lock cannot switch $FF00 and hand back a bank-1 pointer: the
 // caller's own code (ordinary bank-0 RAM, not Common RAM) would vanish. Instead
 // a lock makes the object resident in the CALLER'S OWN bank, migrating it
 // through the Common-RAM staging routines if it is in the other one; no bank
 // switch is held across caller code. A lock held by one bank's code pins the
 // object there, so the other bank's lock attempt fails (NULL).
-void *mos_cache_lock_in(mos_handle_t handle, uint8_t caller_bank) {
+void *mos_cache_lock_in(mos_cache_handle_t handle, uint8_t caller_bank) {
   uint8_t units, idx, nb = 0;
   uint16_t dst;
   poll_point();
@@ -639,18 +639,18 @@ void *mos_cache_lock_in(mos_handle_t handle, uint8_t caller_bank) {
   return (void *)ho[handle - 1].addr;
 }
 
-void *mos_handle_lock(mos_handle_t handle) {
+void *mos_cache_lock(mos_cache_handle_t handle) {
   return mos_cache_lock_in(handle, 0);
 }
 
-void mos_handle_unlock(mos_handle_t handle) {
+void mos_cache_unlock(mos_cache_handle_t handle) {
   if (handle && handle <= NOBJ && ho[handle - 1].lock)
     ho[handle - 1].lock--;
 }
 
 // Defragment both banks' pools; returns the number of items moved. Active
 // modules and locked objects are never moved.
-uint8_t mos_defrag(void) {
+uint8_t mos_cache_defrag(void) {
   ensure_bank1();
   return defrag(0) + defrag(1);
 }
@@ -665,13 +665,13 @@ uint16_t mos_cache_pool_base(uint8_t bank) {
     ensure_bank1();
   return pool_base[bank];
 }
-static uint8_t valid_handle(mos_handle_t handle) {
+static uint8_t valid_handle(mos_cache_handle_t handle) {
   return handle && handle <= NOBJ && ho[handle - 1].used;
 }
-uint8_t mos_handle_bank(mos_handle_t handle) {
+uint8_t mos_cache_handle_bank(mos_cache_handle_t handle) {
   return valid_handle(handle) ? ho[handle - 1].bank : 0xFF;
 }
-uint8_t mos_handle_locks(mos_handle_t handle) {
+uint8_t mos_cache_handle_locks(mos_cache_handle_t handle) {
   return valid_handle(handle) ? ho[handle - 1].lock : 0;
 }
 
@@ -694,11 +694,11 @@ static uint8_t sh_min, sh_max, sh_busy;
 static uint16_t sh_low, sh_high; // free-byte watermarks of the malloc heap
 
 // Default (weak) tier extension points: nothing to demote to, nothing to write.
-__attribute__((weak)) uint8_t mos_tier_demote(uint8_t bank) {
+__attribute__((weak)) uint8_t mos_cache_tier_demote(uint8_t bank) {
   (void)bank;
   return 0;
 }
-__attribute__((weak)) void mos_tier_writebehind(void) {}
+__attribute__((weak)) void mos_cache_tier_writebehind(void) {}
 
 // True if any active module or locked object is in bank 0's pool: it cannot
 // move, so the pool block must not be moved either.
@@ -725,7 +725,7 @@ static uint8_t used_top(void) { // highest used unit of bank 0, plus one
 // cannot make the caller loop forever.
 static uint8_t demoted(void) {
   uint8_t before = mos_cache_free_units(0);
-  return mos_tier_demote(0) && mos_cache_free_units(0) > before;
+  return mos_cache_tier_demote(0) && mos_cache_free_units(0) > before;
 }
 
 // Give up to `want` units of bank 0's pool tail back to the heap; returns the
@@ -845,7 +845,7 @@ uint8_t mos_cache_service(void) {
     if (!add || pool_units[0] == sh_max)
       sh_want = 0;
   }
-  mos_tier_writebehind();
+  mos_cache_tier_writebehind();
   return changed;
 }
 

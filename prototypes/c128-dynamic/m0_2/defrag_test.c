@@ -4,13 +4,13 @@
 
 /* Defragmentation test. Expected values in comments. */
 
-typedef uint16_t mos_handle_t;
-mos_handle_t mos_cacheable_malloc(uint16_t size);
-uint8_t mos_cacheable_free(mos_handle_t h);
-void *mos_handle_lock(mos_handle_t h);
-void mos_handle_unlock(mos_handle_t h);
-uint8_t obj_bank(mos_handle_t h), pool_free_units(uint8_t bank), pool_max_run(uint8_t bank);
-uint8_t mos_defrag(void), mod_evict(uint8_t id);
+typedef uint16_t mos_cache_handle_t;
+mos_cache_handle_t mos_cache_malloc(uint16_t size);
+uint8_t mos_cache_free(mos_cache_handle_t h);
+void *mos_cache_lock(mos_cache_handle_t h);
+void mos_cache_unlock(mos_cache_handle_t h);
+uint8_t obj_bank(mos_cache_handle_t h), pool_free_units(uint8_t bank), pool_max_run(uint8_t bank);
+uint8_t mos_cache_defrag(void), mod_evict(uint8_t id);
 void mod_init(void);
 unsigned char m_r_call_sm(void), m_r_sm_to_b(void), m_r_entry(unsigned char), m_r_viaptr(unsigned char), m_r_lohi(unsigned char);
 unsigned char m_r_try_defrag(void);
@@ -29,20 +29,20 @@ static volatile uint8_t frag_ok, mr_before, free_before;  /* 1; max run < 6 <= f
 static volatile uint8_t big_ok, big_b, dm_delta, mr_after;/* 1, 1, >=1, run grew */
 static volatile uint8_t a_data;                           /* 1 */
 
-static mos_handle_t o[5], x[10], y, big;
+static mos_cache_handle_t o[5], x[10], y, big;
 
-static uint8_t fill(mos_handle_t h, uint8_t n, uint8_t seed) {
-  uint8_t *p = mos_handle_lock(h), i;
+static uint8_t fill(mos_cache_handle_t h, uint8_t n, uint8_t seed) {
+  uint8_t *p = mos_cache_lock(h), i;
   if (!p) return 0;
   for (i = 0; i < n; i++) p[i] = (uint8_t)(seed + i * 7);
-  mos_handle_unlock(h);
+  mos_cache_unlock(h);
   return 1;
 }
-static uint8_t check(mos_handle_t h, uint8_t n, uint8_t seed) {
-  uint8_t *p = mos_handle_lock(h), i, ok = 1;
+static uint8_t check(mos_cache_handle_t h, uint8_t n, uint8_t seed) {
+  uint8_t *p = mos_cache_lock(h), i, ok = 1;
   if (!p) return 0;
   for (i = 0; i < n; i++) if (p[i] != (uint8_t)(seed + i * 7)) ok = 0;
-  mos_handle_unlock(h);
+  mos_cache_unlock(h);
   return ok;
 }
 
@@ -51,16 +51,16 @@ int main(void) {
   mod_init();
 
   /* ---- Phase B: R relocates when defragmentation slides it down ---- */
-  for (i = 0; i < 5; i++) { o[i] = mos_cacheable_malloc(20); fill(o[i], 20, 0x20 + i); }  /* bank 0 full */
-  y = mos_cacheable_malloc(70);          /* bank 1, units 0-2 */
+  for (i = 0; i < 5; i++) { o[i] = mos_cache_malloc(20); fill(o[i], 20, 0x20 + i); }  /* bank 0 full */
+  y = mos_cache_malloc(70);          /* bank 1, units 0-2 */
   qb1 = m_r_call_sm();                   /* 1: R loads into bank 1, units 3-5 */
   m_r_sm_to_b();
   qb2 = m_r_call_sm();                   /* 2 */
   addr_before = mt_addr[5];
-  mos_cacheable_free(y);                 /* hole in front of R */
+  mos_cache_free(y);                 /* hole in front of R */
   moves_pinned = m_r_try_defrag();       /* R is active: pinned, nothing may move */
   addr_pinned = mt_addr[5];              /* == addr_before */
-  moves_b = mos_defrag();                /* 1: R slides to unit 0, relocated by -96 */
+  moves_b = mos_cache_defrag();                /* 1: R slides to unit 0, relocated by -96 */
   addr_after = mt_addr[5];
   delta_ok = (addr_after == (uint16_t)(addr_before - 96));
   qa1 = m_r_call_sm();                   /* 2: self-modified operand relocated too */
@@ -70,29 +70,29 @@ int main(void) {
 
   /* ---- Phase E: a locked object is pinned; the others still compact ---- */
   {
-    uint8_t *p = mos_handle_lock(o[2]), *q;
-    mos_cacheable_free(o[0]);            /* hole at bank-0 unit 0 */
+    uint8_t *p = mos_cache_lock(o[2]), *q;
+    mos_cache_free(o[0]);            /* hole at bank-0 unit 0 */
     dm = defrag_moves;
-    mos_defrag();                        /* o[1] slides down; locked o[2] stays put */
+    mos_cache_defrag();                        /* o[1] slides down; locked o[2] stays put */
     e_moved = defrag_moves - dm;         /* >= 1 */
-    q = mos_handle_lock(o[2]);           /* nested lock: same address if it did not move */
+    q = mos_cache_lock(o[2]);           /* nested lock: same address if it did not move */
     e_same = (p == q);
-    mos_handle_unlock(o[2]);
-    mos_handle_unlock(o[2]);
+    mos_cache_unlock(o[2]);
+    mos_cache_unlock(o[2]);
     ok = check(o[1], 20, 0x21) & check(o[2], 20, 0x22) & check(o[3], 20, 0x23) & check(o[4], 20, 0x24);
     e_data = ok;                         /* 1 */
   }
 
   /* ---- Phase A: allocation defragments a fragmented bank ---- */
-  for (i = 1; i < 5; i++) mos_cacheable_free(o[i]);
+  for (i = 1; i < 5; i++) mos_cache_free(o[i]);
   mod_evict(5);
-  for (i = 0; i < 10; i++) { x[i] = mos_cacheable_malloc(70); fill(x[i], 70, 0x50 + i); }
+  for (i = 0; i < 10; i++) { x[i] = mos_cache_malloc(70); fill(x[i], 70, 0x50 + i); }
   /* free every other object that lives in bank 1 -> 3-unit holes */
   {
     uint8_t toggle = 0;
     for (i = 0; i < 10; i++) {
       if (obj_bank(x[i]) != 1) continue;
-      if (toggle) { mos_cacheable_free(x[i]); x[i] = 0; }
+      if (toggle) { mos_cache_free(x[i]); x[i] = 0; }
       toggle = !toggle;
     }
   }
@@ -100,7 +100,7 @@ int main(void) {
   free_before = pool_free_units(1);
   frag_ok = (mr_before < 6 && free_before >= 6);         /* 1 */
   dm = defrag_moves;
-  big = mos_cacheable_malloc(190);       /* 6 units: only fits after defragmenting bank 1 */
+  big = mos_cache_malloc(190);       /* 6 units: only fits after defragmenting bank 1 */
   big_ok = (big != 0);
   big_b = big ? obj_bank(big) : 9;       /* 1 */
   dm_delta = defrag_moves - dm;          /* >= 1 */

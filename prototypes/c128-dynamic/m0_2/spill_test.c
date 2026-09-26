@@ -5,12 +5,12 @@
 /* Object spilling / out-of-memory test. No modules are involved, so any
  * eviction count > 0 would be a bug. Expected values in comments. */
 
-typedef uint16_t mos_handle_t;
-mos_handle_t mos_cacheable_malloc(uint16_t size);
-uint8_t mos_cacheable_free(mos_handle_t h);
-void *mos_handle_lock(mos_handle_t h);
-void mos_handle_unlock(mos_handle_t h);
-uint8_t obj_bank(mos_handle_t h), pool_free_units(uint8_t bank);
+typedef uint16_t mos_cache_handle_t;
+mos_cache_handle_t mos_cache_malloc(uint16_t size);
+uint8_t mos_cache_free(mos_cache_handle_t h);
+void *mos_cache_lock(mos_cache_handle_t h);
+void mos_cache_unlock(mos_cache_handle_t h);
+uint8_t obj_bank(mos_cache_handle_t h), pool_free_units(uint8_t bank);
 void mod_init(void);
 
 static volatile uint8_t f0_full;                         /* 0: five 1-unit objects fill bank 0 */
@@ -22,32 +22,32 @@ static volatile uint8_t n_big, oom_malloc, oom_lock_null;/* 11, 1 (malloc return
 static volatile uint8_t free0_end, free1_end, data_ok2;  /* 2 2 (fragmented: 4 free but no 3-unit run), 1 */
 static volatile uint8_t spills_before_oom, spills_after_oom, freed_ok;
 
-static mos_handle_t o[5], big, g[16];
+static mos_cache_handle_t o[5], big, g[16];
 
-static uint8_t fill(mos_handle_t h, uint8_t n, uint8_t seed) {
-  uint8_t *p = mos_handle_lock(h), i;
+static uint8_t fill(mos_cache_handle_t h, uint8_t n, uint8_t seed) {
+  uint8_t *p = mos_cache_lock(h), i;
   if (!p) return 0;
   for (i = 0; i < n; i++) p[i] = (uint8_t)(seed + i * 7);
-  mos_handle_unlock(h);
+  mos_cache_unlock(h);
   return 1;
 }
-static uint8_t check(mos_handle_t h, uint8_t n, uint8_t seed) {
-  uint8_t *p = mos_handle_lock(h), i, ok = 1;
+static uint8_t check(mos_cache_handle_t h, uint8_t n, uint8_t seed) {
+  uint8_t *p = mos_cache_lock(h), i, ok = 1;
   if (!p) return 0;
   for (i = 0; i < n; i++) if (p[i] != (uint8_t)(seed + i * 7)) ok = 0;
-  mos_handle_unlock(h);
+  mos_cache_unlock(h);
   return ok;
 }
 
 int main(void) {
   uint8_t i, ok;
   mod_init();
-  for (i = 0; i < 5; i++) { o[i] = mos_cacheable_malloc(20); fill(o[i], 20, 0x40 + i); }
+  for (i = 0; i < 5; i++) { o[i] = mos_cache_malloc(20); fill(o[i], 20, 0x40 + i); }
   f0_full = pool_free_units(0);                /* 0 */
-  big = mos_cacheable_malloc(70);              /* bank 0 full -> bank 1 */
+  big = mos_cache_malloc(70);              /* bank 0 full -> bank 1 */
   fill(big, 70, 0x90);                         /* locking from bank 0 migrates it here... */
   big_bank1 = obj_bank(big);
-  mos_handle_unlock(big);
+  mos_cache_unlock(big);
   /* fill() above already moved `big` into bank 0 by spilling the oldest objects: */
   big_bank0 = obj_bank(big);                   /* 0 */
   sp_a = obj_spills;                           /* 3 */
@@ -60,10 +60,10 @@ int main(void) {
 
   /* out of memory: free everything, then fill both pools with 3-unit objects
    * WITHOUT touching them: g[0] lands in bank 0, g[1..10] in bank 1 */
-  for (i = 0; i < 5; i++) mos_cacheable_free(o[i]);
-  mos_cacheable_free(big);
+  for (i = 0; i < 5; i++) mos_cache_free(o[i]);
+  mos_cache_free(big);
   for (i = 0; i < 16; i++) {
-    g[i] = mos_cacheable_malloc(70);
+    g[i] = mos_cache_malloc(70);
     if (!g[i]) break;
   }
   n_big = i;                                   /* 11 */
@@ -75,11 +75,11 @@ int main(void) {
   /* g[1] is in bank 1; locking it from bank 0 needs 3 units there: bank 0 has
    * 2 free and its only object (g[0]) cannot spill (bank 1 has 2 free) -> NULL,
    * nothing lost */
-  oom_lock_null = (mos_handle_lock(g[1]) == 0);/* 1 */
+  oom_lock_null = (mos_cache_lock(g[1]) == 0);/* 1 */
   spills_after_oom = obj_spills;               /* == spills_before_oom */
   data_ok2 = check(g[0], 70, 0x10);            /* 1: g[0] intact */
   /* recovery: free one bank-1 object; now g[0] can spill and g[1] can come over */
-  mos_cacheable_free(g[10]);
+  mos_cache_free(g[10]);
   freed_ok = fill(g[1], 70, 0x33) && check(g[1], 70, 0x33) && check(g[0], 70, 0x10); /* 1 */
   printf("spill: %d/%d ok=%d %d\n", sp_a, ev_a, data_ok1, freed_ok);
   return 0;

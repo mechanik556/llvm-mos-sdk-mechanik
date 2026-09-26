@@ -30,7 +30,7 @@ static int r_works(void) {
 
 int main(void) {
   uint16_t r_at;
-  mos_handle_t h;
+  mos_cache_handle_t h;
   unsigned char *p;
 
   CHECK(mos_cache_static(pool0, 5) == 0);
@@ -57,24 +57,24 @@ int main(void) {
   CHECK(mos_cache_module_evict(2) == 0);
   CHECK(!(__mos_mt_addr[2] >> 8));
   CHECK(mos_cache_module_evict(2) == 2); /* not resident */
-  h = mos_cacheable_malloc(20);
-  CHECK(h && (p = mos_handle_lock(h)) != 0);
+  h = mos_cache_malloc(20);
+  CHECK(h && (p = mos_cache_lock(h)) != 0);
   p[0] = 1;
   CHECK(m_add7(1) == 8); /* F loads into the space that is left */
   CHECK(r_works());
   CHECK(m_r_call_sm() == 2); /* the patched operand survived evict + reload */
   CHECK(__mos_mt_addr[2] != r_at || __mos_mt_cr[2] == 0x4E ||
         mos_cache_stats.mod_evictions >= 1);
-  mos_handle_unlock(h);
+  mos_cache_unlock(h);
 
   /* host services: module code locks an object (which comes to the module's
    * bank), changes it and unlocks it; a module cannot evict itself while it is
    * active (the host refuses: pinned) */
   CHECK(m_g_incr((unsigned char)h) == 0);
-  CHECK(mos_handle_locks(h) == 0);
-  p = mos_handle_lock(h);
+  CHECK(mos_cache_handle_locks(h) == 0);
+  p = mos_cache_lock(h);
   CHECK(p && p[0] == 2);
-  mos_handle_unlock(h);
+  mos_cache_unlock(h);
   CHECK(m_r_try_evict() == 1);
   CHECK(__mos_mt_addr[2] >> 8); /* R is still resident */
 
@@ -99,7 +99,7 @@ int main(void) {
   }
 
   /* defragmentation keeps modules working (they are relocated by the move) */
-  (void)mos_defrag();
+  (void)mos_cache_defrag();
   CHECK(r_works() && m_add1(1) == 2 && m_cb(1) == 102);
   CHECK(mos_cache_stats.mod_loads >= 4);
   return EXIT_SUCCESS;

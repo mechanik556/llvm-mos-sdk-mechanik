@@ -9,8 +9,8 @@ void mod_init(void);         /* static 5-unit bank-0 pool, 32-unit bank-1 pool, 
 void mod_init_shared(void);  /* the same but bank 0's pool is left for mos_cache_shared */
 void mod_clear_refs(void);
 
-#define obj_bank mos_handle_bank
-#define obj_lock mos_handle_locks
+#define obj_bank mos_cache_handle_bank
+#define obj_lock mos_cache_handle_locks
 #define pool_free_units mos_cache_free_units
 #define pool_max_run mos_cache_max_run
 #define mod_evict mos_cache_module_evict

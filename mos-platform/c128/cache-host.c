@@ -21,10 +21,10 @@ uint8_t __mos_host_evict(uint8_t id) { return mos_cache_module_evict(id); }
 
 // Returns the pointer as a 16-bit INTEGER: llvm-mos returns pointers in
 // __rc2/__rc3 but integers in A/X, and module code reads A/X.
-uint16_t __mos_host_lock(mos_handle_t handle) {
+uint16_t __mos_host_lock(mos_cache_handle_t handle) {
   return (uint16_t)mos_cache_lock_in(handle, (__mos_gate_cr & 0x40) ? 1 : 0);
 }
 
-void __mos_host_unlock(mos_handle_t handle) { mos_handle_unlock(handle); }
+void __mos_host_unlock(mos_cache_handle_t handle) { mos_cache_unlock(handle); }
 
-uint8_t __mos_host_defrag(void) { return mos_defrag(); }
+uint8_t __mos_host_defrag(void) { return mos_cache_defrag(); }

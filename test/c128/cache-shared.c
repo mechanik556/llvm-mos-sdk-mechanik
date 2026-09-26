@@ -30,20 +30,20 @@ size_t __heap_bytes_free(void);
 
 static void *blk[48];
 static unsigned char nblk;
-static mos_handle_t o1, g[16];
+static mos_cache_handle_t o1, g[16];
 
-static int fill(mos_handle_t h, unsigned n, unsigned char seed) {
-  unsigned char *p = mos_handle_lock(h);
+static int fill(mos_cache_handle_t h, unsigned n, unsigned char seed) {
+  unsigned char *p = mos_cache_lock(h);
   unsigned i;
   if (!p)
     return 0;
   for (i = 0; i < n; i++)
     p[i] = (unsigned char)(seed + i * 7);
-  mos_handle_unlock(h);
+  mos_cache_unlock(h);
   return 1;
 }
-static int check(mos_handle_t h, unsigned n, unsigned char seed) {
-  unsigned char *p = mos_handle_lock(h);
+static int check(mos_cache_handle_t h, unsigned n, unsigned char seed) {
+  unsigned char *p = mos_cache_lock(h);
   unsigned i;
   int ok = 1;
   if (!p)
@@ -51,7 +51,7 @@ static int check(mos_handle_t h, unsigned n, unsigned char seed) {
   for (i = 0; i < n; i++)
     if (p[i] != (unsigned char)(seed + i * 7))
       ok = 0;
-  mos_handle_unlock(h);
+  mos_cache_unlock(h);
   return ok;
 }
 static int tags_ok(void) {
@@ -110,7 +110,7 @@ int main(void) {
 
   /* bank 0's pool: six 1-unit objects = full */
   for (i = 0; i < 6; i++) {
-    g[i] = mos_cacheable_malloc(20);
+    g[i] = mos_cache_malloc(20);
     CHECK(g[i] && fill(g[i], 20, 0x11 * (i + 1)));
   }
   CHECK(mos_cache_free_units(0) == 0);
@@ -129,7 +129,7 @@ int main(void) {
 
   /* ---- the other direction: exhausting the cache leaves malloc alone ---- */
   for (n = 6; n < 16; n++) {
-    g[n] = mos_cacheable_malloc(70);
+    g[n] = mos_cache_malloc(70);
     if (!g[n])
       break;
   }
@@ -143,7 +143,7 @@ int main(void) {
     blk[nblk++] = p;
   }
   for (i = 6; i < n; i++)
-    mos_cacheable_free(g[i]);
+    mos_cache_free(g[i]);
   free_blocks();
   fr = __heap_bytes_free();
   CHECK((F0 - fr) == cost_init - (size_t)(INIT - MIN) * 32);
@@ -152,7 +152,7 @@ int main(void) {
    */
   adj = malloc(20); /* sits right behind the pool block */
   CHECK((uint16_t)adj == mos_cache_pool_base(0) + MIN * 32 + 2);
-  o1 = mos_cacheable_malloc(50);
+  o1 = mos_cache_malloc(50);
   CHECK(o1 && fill(o1, 50, 0x55)); /* bank 0 is full: wants to grow */
   base0 = mos_cache_pool_base(0);
   base_moves = mos_cache_stats.pool_moves;
@@ -166,12 +166,12 @@ int main(void) {
 
   /* a locked object pins the pool: growing is refused rather than moving it */
   {
-    unsigned char *p = mos_handle_lock(g[0]);
+    unsigned char *p = mos_cache_lock(g[0]);
     unsigned char sz = mos_cache_pool_units(0), mv = mos_cache_stats.pool_moves;
-    CHECK(p && mos_handle_bank(g[0]) == 0);
+    CHECK(p && mos_cache_handle_bank(g[0]) == 0);
     CHECK(mos_cache_service() == 0);
     CHECK(mos_cache_pool_units(0) == sz && mos_cache_stats.pool_moves == mv);
-    mos_handle_unlock(g[0]);
+    mos_cache_unlock(g[0]);
   }
   CHECK(mos_cache_service() == 1);
   CHECK(mos_cache_pool_units(0) == MIN + 8); /* four units per call */
@@ -195,11 +195,10 @@ int main(void) {
     unsigned char a = mos_cache_pool_units(0);
     unsigned char svc = mos_cache_stats.services;
     CHECK(fill_heap_until(LOW) && __heap_bytes_free() < LOW);
-    (void)mos_cacheable_free(mos_cacheable_malloc(20)); /* polling is off */
+    (void)mos_cache_free(mos_cache_malloc(20)); /* polling is off */
     CHECK(mos_cache_pool_units(0) == a && mos_cache_stats.services == svc);
     mos_cache_auto_poll(1);
-    (void)mos_cacheable_free(
-        mos_cacheable_malloc(20)); /* a safe point: yields */
+    (void)mos_cache_free(mos_cache_malloc(20)); /* a safe point: yields */
     CHECK(mos_cache_pool_units(0) < a);
     CHECK(__heap_bytes_free() >= LOW);
     mos_cache_auto_poll(0);

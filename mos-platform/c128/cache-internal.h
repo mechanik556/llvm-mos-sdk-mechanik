@@ -27,8 +27,8 @@ void c128_bank1_read(void *dest, unsigned short bank1_src, unsigned short size);
 // Entry points behind the host jump table (cache-host.s), reached through the
 // call gate.
 uint8_t __mos_host_evict(uint8_t id);
-uint16_t __mos_host_lock(mos_handle_t handle);
-void __mos_host_unlock(mos_handle_t handle);
+uint16_t __mos_host_lock(mos_cache_handle_t handle);
+void __mos_host_unlock(mos_cache_handle_t handle);
 uint8_t __mos_host_defrag(void);
 
 // The caller's $FF00 as the call gate saved it on entry (zero page).

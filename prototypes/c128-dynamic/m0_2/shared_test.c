@@ -7,12 +7,12 @@
  * two heaps collaborate (design 11.11). Flags are dumped from VICE; every
  * "ok" flag must be 1, counters are noted in the comments. */
 
-typedef uint16_t mos_handle_t;
-mos_handle_t mos_cacheable_malloc(uint16_t size);
-uint8_t mos_cacheable_free(mos_handle_t h);
-void *mos_handle_lock(mos_handle_t h);
-void mos_handle_unlock(mos_handle_t h);
-uint8_t obj_bank(mos_handle_t h), pool_free_units(uint8_t bank);
+typedef uint16_t mos_cache_handle_t;
+mos_cache_handle_t mos_cache_malloc(uint16_t size);
+uint8_t mos_cache_free(mos_cache_handle_t h);
+void *mos_cache_lock(mos_cache_handle_t h);
+void mos_cache_unlock(mos_cache_handle_t h);
+uint8_t obj_bank(mos_cache_handle_t h), pool_free_units(uint8_t bank);
 uint8_t mos_cache_shared(uint8_t min_units, uint8_t init_units, uint8_t max_units, uint16_t low, uint16_t high);
 uint8_t mos_cache_service(void);
 void mod_init(void);
@@ -47,20 +47,20 @@ static volatile uint8_t d_moves, d_evictions, d_yielded, d_grows, d_hooks;
 
 static void *blk[48];
 static uint8_t nblk;
-static mos_handle_t o1, o2, g[16];
+static mos_cache_handle_t o1, o2, g[16];
 
-static uint8_t fill(mos_handle_t h, uint8_t n, uint8_t seed) {
-  uint8_t *p = mos_handle_lock(h), i;
+static uint8_t fill(mos_cache_handle_t h, uint8_t n, uint8_t seed) {
+  uint8_t *p = mos_cache_lock(h), i;
   if (!p) return 0;
   for (i = 0; i < n; i++) p[i] = (uint8_t)(seed + i * 7);
-  mos_handle_unlock(h);
+  mos_cache_unlock(h);
   return 1;
 }
-static uint8_t check(mos_handle_t h, uint8_t n, uint8_t seed) {
-  uint8_t *p = mos_handle_lock(h), i, ok = 1;
+static uint8_t check(mos_cache_handle_t h, uint8_t n, uint8_t seed) {
+  uint8_t *p = mos_cache_lock(h), i, ok = 1;
   if (!p) return 0;
   for (i = 0; i < n; i++) if (p[i] != (uint8_t)(seed + i * 7)) ok = 0;
-  mos_handle_unlock(h);
+  mos_cache_unlock(h);
   return ok;
 }
 static uint8_t tags_ok(void) {
@@ -103,8 +103,8 @@ int main(void) {
   /* bank 0's pool: A (1 unit), R (3), two objects (1 each) = full */
   a1 = m_add1(4);
   r1 = m_r_call_sm();
-  o1 = mos_cacheable_malloc(20);
-  o2 = mos_cacheable_malloc(20);
+  o1 = mos_cache_malloc(20);
+  o2 = mos_cache_malloc(20);
   fill(o1, 20, 0x11);
   fill(o2, 20, 0x22);
   bank0_full = pool_free_units(0) == 0 && obj_bank(o1) == 0 && obj_bank(o2) == 0;
@@ -132,7 +132,7 @@ int main(void) {
 
   /* ---- the other direction: exhausting the cache leaves malloc's data alone ---- */
   for (i = 0; i < 16; i++) {
-    g[i] = mos_cacheable_malloc(70);
+    g[i] = mos_cache_malloc(70);
     if (!g[i]) break;
   }
   cache_full = i < 16;                                       /* bank 1 ran out (10 objects) */
@@ -143,7 +143,7 @@ int main(void) {
     malloc_still = p != 0;
     if (p) { memset(p, 0x30 + nblk, 60); blk[nblk++] = p; }
   }
-  for (i = 0; i < 16; i++) if (g[i]) mos_cacheable_free(g[i]);
+  for (i = 0; i < 16; i++) if (g[i]) mos_cache_free(g[i]);
   free_blocks();
   fr = __heap_bytes_free();
   exact_free1 = (F0 - fr) == cost_init - (size_t)(INIT - MIN) * 32;
@@ -152,7 +152,7 @@ int main(void) {
    * are relocated and objects follow ---- */
   adj = malloc(20);                                          /* sits right behind the pool block */
   adjacent = (uint16_t)adj == pool0_base() + MIN * 32 + 2;
-  g[0] = mos_cacheable_malloc(70);                           /* bank 0 is full: wants to grow */
+  g[0] = mos_cache_malloc(70);                           /* bank 0 is full: wants to grow */
   base0 = pool0_base();
   base_moves = sh_moves;
   mos_cache_service();
@@ -167,13 +167,13 @@ int main(void) {
 
   /* a locked object pins the pool: growing is refused rather than moving it */
   {
-    uint8_t *p = mos_handle_lock(o1);
+    uint8_t *p = mos_cache_lock(o1);
     uint8_t sz = pool0_size(), mv = sh_moves;
     (void)p;
     pin_refused = obj_bank(o1) == 0 && !mos_cache_service();
     pin_size = pool0_size();
     pin_moves_same = pool0_size() == sz && sh_moves == mv;
-    mos_handle_unlock(o1);
+    mos_cache_unlock(o1);
   }
   mos_cache_service();
   after_unpin = pool0_size();                                /* 11 */

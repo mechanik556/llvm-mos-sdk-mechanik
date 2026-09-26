@@ -11,16 +11,16 @@
 // memory can only be touched by Common-RAM code with interrupts off. This heap
 // is therefore a separate, explicit API built on handles instead of pointers:
 //
-//   mos_handle_t h = mos_cacheable_malloc(100);
-//   unsigned char *p = mos_handle_lock(h);   // valid until the matching unlock
+//   mos_cache_handle_t h = mos_cache_malloc(100);
+//   unsigned char *p = mos_cache_lock(h);   // valid until the matching unlock
 //   p[0] = 1;
-//   mos_handle_unlock(h);
-//   mos_cacheable_free(h);
+//   mos_cache_unlock(h);
+//   mos_cache_free(h);
 //
 // Because a handle is never a pointer, the runtime is free to move the bytes
 // while the object is unlocked: it keeps objects in bank 0 or bank 1, moves an
 // unlocked object to the other bank to make room, defragments, and (with the
-// later tiers) can evict it further. mos_handle_lock makes the object resident
+// later tiers) can evict it further. mos_cache_lock makes the object resident
 // in bank 0 and returns a pointer valid until the matching unlock; a locked
 // object never moves.
 //
@@ -92,7 +92,7 @@ extern "C" {
 #endif
 
 /// A handle to a cacheable object. 0 is the null handle.
-typedef uint16_t mos_handle_t;
+typedef uint16_t mos_cache_handle_t;
 
 // ---- Setup (call once, before any other function here) ---------------------
 
@@ -125,25 +125,25 @@ uint8_t mos_cache_bank1(uint16_t base, uint8_t units, uint8_t unit_shift);
 /// making room by moving unlocked objects and dropping modules if it must.
 /// Returns 0 if it cannot be placed. The contents are not initialized. A safe
 /// point for automatic polling (mos_cache_auto_poll).
-mos_handle_t mos_cacheable_malloc(uint16_t size);
+mos_cache_handle_t mos_cache_malloc(uint16_t size);
 
 /// Free an object. Returns 0, 1 if it is locked, 2 for an invalid handle.
-uint8_t mos_cacheable_free(mos_handle_t handle);
+uint8_t mos_cache_free(mos_cache_handle_t handle);
 
 /// Make the object resident in bank 0 and return a pointer to it, valid until
-/// the matching mos_handle_unlock; locks nest. Returns NULL for an invalid
+/// the matching mos_cache_unlock; locks nest. Returns NULL for an invalid
 /// handle or if there is no room to bring it into bank 0. A safe point for
 /// automatic polling.
-void *mos_handle_lock(mos_handle_t handle);
+void *mos_cache_lock(mos_cache_handle_t handle);
 
 /// Release one lock. Invalid handles and unlocked objects are ignored.
-void mos_handle_unlock(mos_handle_t handle);
+void mos_cache_unlock(mos_cache_handle_t handle);
 
 /// Slide every unlocked object (and module) in both pools together so free
 /// space forms as few runs as the locked items allow. Objects are copied;
 /// handles do not change. Returns the number of items moved. (Allocation
 /// defragments by itself when it has to.)
-uint8_t mos_defrag(void);
+uint8_t mos_cache_defrag(void);
 
 // ---- Cooperation with malloc (shared mode) ----------------------------------
 
@@ -161,16 +161,16 @@ uint8_t mos_cache_service(void);
 void mos_cache_auto_poll(uint8_t every);
 
 /// Extension points for storage tiers this library does not implement, both
-/// weak and by default doing nothing. mos_tier_demote is called when bank 0's
-/// pool must give up space and spilling to bank 1 has failed: move some
+/// weak and by default doing nothing. mos_cache_tier_demote is called when bank
+/// 0's pool must give up space and spilling to bank 1 has failed: move some
 /// unlocked object out of `bank` to an I/O-free faster tier (an REU) and return
 /// non-zero if it freed room (a claim that no pool unit was freed is ignored).
 /// It runs inside malloc, so it must not do KERNAL or disk I/O and must not
-/// call malloc. mos_tier_writebehind is called only from mos_cache_service,
-/// never from inside malloc, and only from ordinary code: this is where
-/// slow-tier (disk) writes belong.
-uint8_t mos_tier_demote(uint8_t bank);
-void mos_tier_writebehind(void);
+/// call malloc. mos_cache_tier_writebehind is called only from
+/// mos_cache_service, never from inside malloc, and only from ordinary code:
+/// this is where slow-tier (disk) writes belong.
+uint8_t mos_cache_tier_demote(uint8_t bank);
+void mos_cache_tier_writebehind(void);
 
 // ---- Diagnostics ------------------------------------------------------------
 
@@ -195,8 +195,8 @@ uint8_t mos_cache_free_units(uint8_t bank);
 uint8_t mos_cache_max_run(uint8_t bank);
 /// Which bank an object is in now (0xFF for an invalid handle), and how many
 /// locks it holds.
-uint8_t mos_handle_bank(mos_handle_t handle);
-uint8_t mos_handle_locks(mos_handle_t handle);
+uint8_t mos_cache_handle_bank(mos_cache_handle_t handle);
+uint8_t mos_cache_handle_locks(mos_cache_handle_t handle);
 
 // ---- Module table ABI (version 1)
 // --------------------------------------------
@@ -265,9 +265,9 @@ void mos_cache_on_evict(uint8_t id);
 /// Register table entry `id` as the host. It must be a static entry (image 0).
 void mos_cache_set_host(uint8_t id);
 
-/// mos_handle_lock for code that runs in `caller_bank`: the object is made
+/// mos_cache_lock for code that runs in `caller_bank`: the object is made
 /// resident in that bank.
-void *mos_cache_lock_in(mos_handle_t handle, uint8_t caller_bank);
+void *mos_cache_lock_in(mos_cache_handle_t handle, uint8_t caller_bank);
 
 #ifdef __cplusplus
 }

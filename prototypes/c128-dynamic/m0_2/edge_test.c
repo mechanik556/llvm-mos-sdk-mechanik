@@ -7,8 +7,8 @@
  * when the hot one is older... here the hot one (B) is OLDER than the cold one
  * (A), so plain FIFO would have evicted B first. */
 
-typedef uint16_t mos_handle_t;
-mos_handle_t mos_cacheable_malloc(uint16_t size);
+typedef uint16_t mos_cache_handle_t;
+mos_cache_handle_t mos_cache_malloc(uint16_t size);
 uint8_t pool_free_units(uint8_t bank);
 void mod_init(void);
 void mod_clear_refs(void);
@@ -29,7 +29,7 @@ int main(void) {
   mod_init();
   m_double(1);                         /* B -> bank 0 (older) */
   m_cb(1);                             /* A -> bank 0 (newer): bank 0 has 4 of 5 units used */
-  mos_cacheable_malloc(20);            /* bank 0 full */
+  mos_cache_malloc(20);            /* bank 0 full */
 
   m_calld(4);                          /* C, D -> bank 1 (bank 0 is full) */
   ev_before_big = evict_n;
@@ -41,7 +41,7 @@ int main(void) {
   r_alive = m_r_call_sm();
   r_bank = mt_cr[5];
 
-  while (pool_free_units(1) && n < 30) { mos_cacheable_malloc(20); n++; }
+  while (pool_free_units(1) && n < 30) { mos_cache_malloc(20); n++; }
   nfill = n;
   free0 = pool_free_units(0);
   free1 = pool_free_units(1);
