@@ -27,8 +27,8 @@ int main(void) {
         MOS_CACHE_BAD_ARGUMENT); /* past $C000 */
   CHECK(mos_cache_bank1(0xFF00, 200, 10) == MOS_CACHE_BAD_ARGUMENT); /* wraps */
   CHECK(mos_cache_bank1(0x2000, 4, 4) ==
-        MOS_CACHE_BAD_ARGUMENT);         /* unit size */
-  CHECK(mos_cache_pool_units(1) > 1000); /* still the default pool */
+        MOS_CACHE_BAD_ARGUMENT);        /* unit size */
+  CHECK(mos_cache_pool_units(1) > 100); /* still the default pool */
 
   CHECK(mos_cache_static(pool0, 5) == MOS_CACHE_OK);
   CHECK(mos_cache_static(pool0, 5) == MOS_CACHE_BAD_ARGUMENT); /* only once */
@@ -38,11 +38,11 @@ int main(void) {
   CHECK(mos_cache_free_units(2) == mos_cache_free_units(1));
   CHECK(mos_cache_max_run(200) == mos_cache_max_run(1));
   CHECK(mos_cache_pool_base(2) == mos_cache_pool_base(1));
-  /* the default bank-1 pool covers bank 1 above the static content, in the same
-   * 32-byte units as bank 0's */
-  CHECK(mos_cache_pool_units(1) > 1000);
+  /* the default bank-1 pool covers bank 1 above the static content in
+   * 256-byte units, bank 0's pool is in 32-byte units */
+  CHECK(mos_cache_pool_units(1) > 150 && mos_cache_pool_units(1) < 200);
   CHECK(mos_cache_pool_base(1) >= 0x1000);
-  CHECK(mos_cache_pool_base(1) + mos_cache_pool_units(1) * 32UL > 0xA000);
+  CHECK(mos_cache_pool_base(1) + mos_cache_pool_units(1) * 256UL > 0xA000);
 
   /* five 1-unit objects fill bank 0 */
   for (i = 0; i < 5; i++) {
@@ -53,7 +53,7 @@ int main(void) {
   CHECK(mos_cache_free_units(0) == 0);
   CHECK(mos_cache_handle_bank(o[0]) == 0);
 
-  /* a small object in bank 1 takes one 32-byte unit, not more */
+  /* a small object in bank 1 takes one unit (256 bytes) */
   {
     uint16_t free1 = mos_cache_free_units(1);
     mos_cache_handle_t small = mos_cache_malloc(20);

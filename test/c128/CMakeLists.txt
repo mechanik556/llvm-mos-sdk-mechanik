@@ -17,6 +17,8 @@ add_vice_test(bank1-state)
 add_vice_test(bank1-copy)
 add_vice_test(cache-objects)
 add_vice_test(cache-shared)
+add_vice_test(cache-units)
+add_vice_test(cache-units-shared)
 add_vice_test(cache-tiers)
 add_vice_test(cache-tiers-static)
 # -mreserve-zp: the gate and the bank-1 staging buffer take zero page the

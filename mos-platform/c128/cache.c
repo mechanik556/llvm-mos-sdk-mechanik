@@ -26,19 +26,22 @@
 #include <stdlib.h>
 #include <string.h>
 
-// A unit index is 16 bits and NO_UNIT means "none". Bank 1's default pool is
-// about 44 KB, which is 1408 units of BANK1_SHIFT (32 bytes).
+// A unit index is 16 bits and NO_UNIT means "none". Bank 1's pool is about 44
+// KB, which is 1408 units of the smallest unit size (32 bytes).
 typedef uint16_t unit_t;
 #define NO_UNIT 0xFFFF
 #define MAX_UNITS 1536      // in bank 1's pool
 #define MAX_BANK0_UNITS 254 // in bank 0's pool (its API takes bytes)
 #define NOBJ 32
 _Static_assert(NOBJ <= 32, "spill_one tracks objects in a 32-bit mask");
-#define BANK0_SHIFT 5         // bank 0's pool always uses 32-byte units
-#define DEFAULT_BANK1_SHIFT 5 // and so does bank 1's default pool
-#define MAX_BANK1_SHIFT 10
-#define BANK1_LOW 0x1000L  // first bank-1 address that is not Common RAM
-#define BANK1_HIGH 0xC000L // where KERNAL ROM and I/O begin
+// Unit sizes are powers of two, 1 << shift bytes, chosen per bank with
+// mos_cache_units; see cache.h for why the defaults are what they are.
+#define MIN_SHIFT 5
+#define MAX_SHIFT 10
+#define DEFAULT_BANK0_SHIFT 5 // 32 bytes
+#define DEFAULT_BANK1_SHIFT 8 // 256 bytes: a page, as in the tiers below
+#define BANK1_LOW 0x1000L     // first bank-1 address that is not Common RAM
+#define BANK1_HIGH 0xC000L    // where KERNAL ROM and I/O begin
 
 // ---- Module table (supplied by the program; see cache.h) -------------------
 // Weak defaults describe "no modules", so a program without a module table
@@ -70,7 +73,7 @@ __attribute__((weak)) const uint16_t __mos_mt_reloc[1];
 // ---- Pools ------------------------------------------------------------------
 static uint16_t pool_base[2];
 static unit_t pool_units[2];
-static uint8_t pool_shift[2] = {BANK0_SHIFT, DEFAULT_BANK1_SHIFT};
+static uint8_t pool_shift[2] = {DEFAULT_BANK0_SHIFT, DEFAULT_BANK1_SHIFT};
 static uint8_t bitmap0[(MAX_BANK0_UNITS + 7) / 8];
 static uint8_t bitmap1[(MAX_UNITS + 7) / 8];
 static uint8_t *const bitmap[2] = {bitmap0, bitmap1};
@@ -194,17 +197,17 @@ extern char __c128bank1_free_end[];
 
 static void ensure_bank1(void) {
   uint16_t start, end, units;
-  uint8_t shift = DEFAULT_BANK1_SHIFT;
+  uint8_t shift = pool_shift[1];
   if (bank1_ready)
     return;
   end = (uint16_t)__c128bank1_free_end;
-  // The smallest unit size (128..1024 bytes) with which the whole region fits
-  // in MAX_UNITS units.
+  // The configured unit size, or the smallest larger one with which the whole
+  // region fits in MAX_UNITS units.
   for (;; shift++) {
     uint16_t mask = ((uint16_t)1 << shift) - 1;
     start = ((uint16_t)__c128bank1_free_start + mask) & ~mask;
     units = start < end ? (end - start) >> shift : 0;
-    if (units <= MAX_UNITS || shift == MAX_BANK1_SHIFT)
+    if (units <= MAX_UNITS || shift == MAX_SHIFT)
       break;
   }
   pool_base[1] = start;
@@ -213,9 +216,19 @@ static void ensure_bank1(void) {
   bank1_ready = 1;
 }
 
+uint8_t mos_cache_units(uint8_t bank0_shift, uint8_t bank1_shift) {
+  if (bank0_shift < MIN_SHIFT || bank0_shift > MAX_SHIFT ||
+      bank1_shift < MIN_SHIFT || bank1_shift > MAX_SHIFT || pool_base[0] ||
+      bank1_ready)
+    return MOS_CACHE_BAD_ARGUMENT;
+  pool_shift[0] = bank0_shift;
+  pool_shift[1] = bank1_shift;
+  return MOS_CACHE_OK;
+}
+
 uint8_t mos_cache_bank1(uint16_t base, uint16_t units, uint8_t unit_shift) {
   uint32_t end = (uint32_t)base + ((uint32_t)units << unit_shift);
-  if (unit_shift < 5 || unit_shift > MAX_BANK1_SHIFT || units > MAX_UNITS ||
+  if (unit_shift < MIN_SHIFT || unit_shift > MAX_SHIFT || units > MAX_UNITS ||
       bank1_ready)
     return MOS_CACHE_BAD_ARGUMENT;
   // Bank 1's $0000-$0FFF is Common RAM, the same memory as bank 0's, and
@@ -230,7 +243,8 @@ uint8_t mos_cache_bank1(uint16_t base, uint16_t units, uint8_t unit_shift) {
 }
 
 uint8_t mos_cache_static(void *pool, uint8_t units) {
-  if (!pool || !units || units > MAX_BANK0_UNITS || pool_base[0])
+  if (!pool || !units || units > MAX_BANK0_UNITS || pool_base[0] ||
+      ((uint32_t)units << pool_shift[0]) > 0xFFFF)
     return MOS_CACHE_BAD_ARGUMENT;
   pool_base[0] = (uint16_t)pool;
   pool_units[0] = units;
@@ -830,7 +844,7 @@ static uint8_t pool0_yield(uint8_t want) {
       n = (uint8_t)room;
     // Shrinking never moves the block.
     if (realloc((void *)pool_base[0], (uint16_t)(pool_units[0] - n)
-                                          << BANK0_SHIFT) !=
+                                          << pool_shift[0]) !=
         (void *)pool_base[0])
       break;
     pool_units[0] -= n;
@@ -853,7 +867,7 @@ static uint8_t pool0_grow(uint8_t add) {
   if (!add || (uint16_t)cur + add > sh_max || pool0_pinned())
     return 0;
   sh_busy = 1;
-  np = realloc((void *)old, (uint16_t)(cur + add) << BANK0_SHIFT);
+  np = realloc((void *)old, (uint16_t)(cur + add) << pool_shift[0]);
   sh_busy = 0;
   if (!np)
     return 0;
@@ -880,10 +894,11 @@ uint8_t mos_cache_shared(uint8_t min_units, uint8_t init_units,
                          uint8_t max_units, uint16_t low, uint16_t high) {
   uint8_t *p;
   if (pool_base[0] || !min_units || min_units > init_units ||
-      init_units > max_units || max_units > MAX_BANK0_UNITS || low >= high)
+      init_units > max_units || max_units > MAX_BANK0_UNITS || low >= high ||
+      ((uint32_t)max_units << pool_shift[0]) > 0xFFFF)
     return MOS_CACHE_BAD_ARGUMENT;
   sh_busy = 1;
-  p = malloc((uint16_t)init_units << BANK0_SHIFT);
+  p = malloc((uint16_t)init_units << pool_shift[0]);
   sh_busy = 0;
   if (!p)
     return MOS_CACHE_NO_MEMORY;
@@ -909,10 +924,10 @@ uint8_t mos_cache_service(void) {
   }
   free = __heap_bytes_free();
   if (free < sh_low) {
-    size_t units = (sh_low - free) / 32 + 1;
+    size_t units = ((sh_low - free) >> pool_shift[0]) + 1;
     changed = pool0_yield(units > 255 ? 255 : (uint8_t)units) != 0;
   } else if (sh_want && free > sh_high) {
-    size_t spare = (free - sh_high) / 32;
+    size_t spare = (free - sh_high) >> pool_shift[0];
     uint8_t add = spare > 4 ? 4 : (uint8_t)spare; // a few units per call
     if (add > sh_max - pool_units[0])
       add = sh_max - pool_units[0];
@@ -945,7 +960,7 @@ static void poll_point(void) {
 // Reclaim: malloc found nothing that fits a chunk of `needed` bytes. Yield
 // enough of the pool to fit it, if possible; no I/O (see above).
 int __malloc_low_memory(size_t needed) {
-  size_t units = needed / 32 + 1;
+  size_t units = (needed >> pool_shift[0]) + 1;
   mos_cache_stats.hook_calls++;
   if (!shared || sh_busy)
     return 0;

@@ -50,7 +50,7 @@ contain three kinds of test:
   `vice-runner.py` prints that line when the test fails.
 
   The C128 cache runtime (`mos-platform/c128/cache.h`) is covered by
-  `cache-objects`, `cache-shared`, `cache-tiers`, `cache-tiers-static` and
+  `cache-objects`, `cache-shared`, `cache-units`, `cache-units-shared`, `cache-tiers`, `cache-tiers-static` and
   `cache-modules` (hand-written relocatable modules, `cache-modules.s`);
   `cache-not-linked-*` check that a program which does not use it does not
   link it.
