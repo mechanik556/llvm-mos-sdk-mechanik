@@ -54,7 +54,8 @@
 // support even if it never places anything in bank 1 itself: the Common-RAM
 // code area at $0800 (saved at startup and restored at exit, see bank1.h) and a
 // 16-byte staging buffer in zero page. Programs that do not use the runtime pay
-// nothing.
+// nothing. The call gate adds about 240 bytes to the Common-RAM code area (512
+// bytes by default, of which bank-1 support itself uses about 60).
 //
 // Zero page. The call gate (linked only by programs that use it) costs 13 more
 // bytes. The zero-page pool is about 102 bytes shared with the compiler's own
@@ -94,10 +95,37 @@ extern "C" {
 /// A handle to a cacheable object. 0 is the null handle.
 typedef uint16_t mos_cache_handle_t;
 
+// ---- Result codes -------------------------------------------------------------
+
+/// Every function that reports a status returns MOS_CACHE_OK (0) on success.
+#define MOS_CACHE_OK 0
+/// mos_cache_static, mos_cache_shared, mos_cache_bank1: a bad argument, or the
+/// pool was already set up (or, for bank 1, already used).
+#define MOS_CACHE_BAD_ARGUMENT 1
+/// mos_cache_shared: malloc has no room for the initial pool block.
+#define MOS_CACHE_NO_MEMORY 2
+/// mos_cache_free: the object is locked; or the handle is not valid.
+#define MOS_CACHE_LOCKED 1
+#define MOS_CACHE_INVALID_HANDLE 2
+/// mos_cache_module_load and the call gate: no room for the module; the gate's
+/// active-module stack is full (gate only); no such module.
+#define MOS_CACHE_NO_ROOM 1
+#define MOS_CACHE_TOO_DEEP 2
+#define MOS_CACHE_NO_SUCH_MODULE 3
+/// mos_cache_module_evict: the module is active; not resident; static. (No such
+/// module is MOS_CACHE_NO_SUCH_MODULE. mos_cache_module_load also returns
+/// MOS_CACHE_STATIC_MODULE for a static module.)
+#define MOS_CACHE_PINNED 1
+#define MOS_CACHE_NOT_RESIDENT 2
+#define MOS_CACHE_STATIC_MODULE 4
+/// mos_cache_handle_bank: the handle is not valid.
+#define MOS_CACHE_INVALID_BANK 0xFF
+
 // ---- Setup (call once, before any other function here) ---------------------
 
 /// Bank 0's pool is `units` 32-byte units of memory at `pool` (which must stay
-/// valid and unused by anything else). Returns 0, or 1 for a bad argument.
+/// valid and unused by anything else). Returns MOS_CACHE_OK or
+/// MOS_CACHE_BAD_ARGUMENT.
 /// `units` is at most 254.
 uint8_t mos_cache_static(void *pool, uint8_t units);
 
@@ -106,8 +134,8 @@ uint8_t mos_cache_static(void *pool, uint8_t units);
 /// 254), and mos_cache_service keeps the heap's free bytes at least `low`
 /// (yielding pool space if not) and, when it grows the pool, at least `high`
 /// afterwards. Requires `low` < `high`. Only while bank 0's pool is unused.
-/// Returns 0, 1 for a bad argument or if a pool is already set up, 2 if malloc
-/// has no room for the initial block.
+/// Returns MOS_CACHE_OK, MOS_CACHE_BAD_ARGUMENT (also if a pool is already set
+/// up) or MOS_CACHE_NO_MEMORY (malloc has no room for the initial block).
 uint8_t mos_cache_shared(uint8_t min_units, uint8_t init_units,
                          uint8_t max_units, uint16_t low, uint16_t high);
 
@@ -115,8 +143,9 @@ uint8_t mos_cache_shared(uint8_t min_units, uint8_t init_units,
 /// address `base` (5 <= unit_shift <= 10; units at most 254). The default, used
 /// if this is not called, is all of bank 1 above statically placed content,
 /// with the smallest unit size (128 to 1024 bytes) that lets it fit in 254
-/// units. Returns 0, or 1 for a bad argument or if the pool was already chosen
-/// or used.
+/// units. The pool must lie in bank 1's $1000-$BFFF (below $1000 is Common RAM,
+/// shared with bank 0; KERNAL ROM and I/O begin at $C000). Returns MOS_CACHE_OK
+/// or MOS_CACHE_BAD_ARGUMENT (also if the pool was already chosen or used).
 uint8_t mos_cache_bank1(uint16_t base, uint8_t units, uint8_t unit_shift);
 
 // ---- Objects ----------------------------------------------------------------
@@ -127,7 +156,8 @@ uint8_t mos_cache_bank1(uint16_t base, uint8_t units, uint8_t unit_shift);
 /// point for automatic polling (mos_cache_auto_poll).
 mos_cache_handle_t mos_cache_malloc(uint16_t size);
 
-/// Free an object. Returns 0, 1 if it is locked, 2 for an invalid handle.
+/// Free an object. Returns MOS_CACHE_OK, MOS_CACHE_LOCKED or
+/// MOS_CACHE_INVALID_HANDLE.
 uint8_t mos_cache_free(mos_cache_handle_t handle);
 
 /// Make the object resident in bank 0 and return a pointer to it, valid until
@@ -151,7 +181,8 @@ uint8_t mos_cache_defrag(void);
 /// they are below `low`, take it back (up to the maximum) when the pool was
 /// short of room and they are above `high`. Growing may move the pool block,
 /// which is refused while an object is locked or a module active in bank 0.
-/// Returns 1 if the pool changed size. Does nothing in static mode.
+/// Returns 1 if the pool changed size. In static mode there is no pool to
+/// resize, and it only gives mos_cache_tier_writebehind its turn.
 uint8_t mos_cache_service(void);
 
 /// Call mos_cache_service automatically every `every`th time the runtime
@@ -193,8 +224,9 @@ uint16_t mos_cache_pool_base(uint8_t bank);
 /// Free units in a pool, and its longest run of free units.
 uint8_t mos_cache_free_units(uint8_t bank);
 uint8_t mos_cache_max_run(uint8_t bank);
-/// Which bank an object is in now (0xFF for an invalid handle), and how many
-/// locks it holds.
+/// Which bank an object is in now (MOS_CACHE_INVALID_BANK for an invalid
+/// handle), and how many locks it holds. Any non-zero `bank` argument of the
+/// functions above means bank 1.
 uint8_t mos_cache_handle_bank(mos_cache_handle_t handle);
 uint8_t mos_cache_handle_locks(mos_cache_handle_t handle);
 
@@ -205,7 +237,8 @@ uint8_t mos_cache_handle_locks(mos_cache_handle_t handle);
 // set today; the toolchain will generate them). Entry i describes module i;
 // there are __mos_mt_count entries of each array. All addresses are bank-0
 // addresses of the canonical image, which is assembled at its own address; the
-// loader relocates it.
+// loader relocates it. Each image must be readable for `size` bytes, and lie in
+// writable RAM: eviction writes the un-relocated image back to it.
 //
 // clang-format off
 //   const uint8_t    __mos_mt_count;     number of entries
@@ -228,17 +261,21 @@ uint8_t mos_cache_handle_locks(mos_cache_handle_t handle);
 // self-modified operands stay correct) and writes the image back.
 
 /// Load module `id` for code running in `caller_bank` (0 or 1: which bank to
-/// prefer). Returns 0 (also if it is already resident), 1 if it cannot be
-/// placed, 3 if there is no such module or it is static. (The call gate
-/// reports the same codes; its 2 means nesting too deep.)
+/// prefer). Returns MOS_CACHE_OK (also if it is already resident),
+/// MOS_CACHE_NO_ROOM, MOS_CACHE_NO_SUCH_MODULE or MOS_CACHE_STATIC_MODULE. (The
+/// call gate reports the same codes, and MOS_CACHE_TOO_DEEP.)
 uint8_t mos_cache_module_load(uint8_t id, uint8_t caller_bank);
 
-/// Evict module `id`. Returns 0, 1 if it is active (pinned), 2 if it is not
-/// resident, 3 if it is static, 4 if there is no such module.
+/// Evict module `id`: un-relocate it and write its canonical image back to
+/// __mos_mt_img[id], so that must be writable RAM. Returns MOS_CACHE_OK,
+/// MOS_CACHE_PINNED (it is active), MOS_CACHE_NOT_RESIDENT,
+/// MOS_CACHE_STATIC_MODULE or MOS_CACHE_NO_SUCH_MODULE.
 uint8_t mos_cache_module_evict(uint8_t id);
 
 /// Diagnostic hook, weak and doing nothing by default: called with the id of
-/// each module the runtime evicts.
+/// each module the runtime evicts. Evictions also happen inside malloc's
+/// reclaim path (see __malloc_low_memory), so the hook can run there and must
+/// obey the same rules: no I/O, no allocation.
 void mos_cache_on_evict(uint8_t id);
 
 // ---- Host services for modules ----------------------------------------------
@@ -251,8 +288,7 @@ void mos_cache_on_evict(uint8_t id);
 // host at index `id` (CALL is `jsr __mos_call_gate; .byte id; .word offset`):
 //
 // clang-format off
-//   CALL id, 0   evict module A -> A = 0 ok / 1 pinned / 2 not resident /
-//                3 static / 4 no such module
+//   CALL id, 0   evict module A -> A = the mos_cache_module_evict code
 //   CALL id, 3   lock the object A (handle low byte, X = high byte) in the
 //                caller's bank -> pointer in A (low) / X (high), 0 if refused
 //   CALL id, 6   unlock the object A/X

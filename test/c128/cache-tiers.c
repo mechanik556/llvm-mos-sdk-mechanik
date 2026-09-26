@@ -1,3 +1,4 @@
+#include "../test-check.h"
 #include <cache.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -12,13 +13,6 @@
  * object to a fictitious tier by freeing it, so the reclaim path makes progress
  * with it. */
 
-#define CHECK(c)                                                               \
-  do {                                                                         \
-    if (!(c))                                                                  \
-      return EXIT_FAILURE;                                                     \
-  } while (0)
-
-size_t __set_heap_limit(size_t limit);
 extern char __c128bank1_free_start[];
 
 static unsigned demote_calls, wb_calls;
@@ -53,8 +47,9 @@ int main(void) {
   __set_heap_limit(1000);
   free(malloc(1));
   /* a tiny bank-1 pool (1 unit), so that nothing can spill there */
-  CHECK(mos_cache_bank1((uint16_t)__c128bank1_free_start, 1, 5) == 0);
-  CHECK(mos_cache_shared(1, 4, 4, 100, 200) == 0);
+  CHECK(mos_cache_bank1((uint16_t)__c128bank1_free_start, 1, 5) ==
+        MOS_CACHE_OK);
+  CHECK(mos_cache_shared(1, 4, 4, 100, 200) == MOS_CACHE_OK);
   for (ng = 0; ng < 5; ng++) {
     g[ng] = mos_cache_malloc(20);
     if (!g[ng])

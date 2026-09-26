@@ -1,3 +1,5 @@
+#include "../test-check.h"
+#include "cache-test.h"
 #include <cache.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -12,15 +14,7 @@
  * pool; polling yields before any allocation fails; automatic polling from the
  * runtime's own safe points; and every byte is accounted for. */
 
-#define CHECK(c)                                                               \
-  do {                                                                         \
-    if (!(c))                                                                  \
-      return EXIT_FAILURE;                                                     \
-  } while (0)
-
 extern char __c128bank1_free_start[];
-size_t __set_heap_limit(size_t limit);
-size_t __heap_bytes_free(void);
 
 #define MIN 2
 #define INIT 6
@@ -32,28 +26,6 @@ static void *blk[48];
 static unsigned char nblk;
 static mos_cache_handle_t o1, g[16];
 
-static int fill(mos_cache_handle_t h, unsigned n, unsigned char seed) {
-  unsigned char *p = mos_cache_lock(h);
-  unsigned i;
-  if (!p)
-    return 0;
-  for (i = 0; i < n; i++)
-    p[i] = (unsigned char)(seed + i * 7);
-  mos_cache_unlock(h);
-  return 1;
-}
-static int check(mos_cache_handle_t h, unsigned n, unsigned char seed) {
-  unsigned char *p = mos_cache_lock(h);
-  unsigned i;
-  int ok = 1;
-  if (!p)
-    return 0;
-  for (i = 0; i < n; i++)
-    if (p[i] != (unsigned char)(seed + i * 7))
-      ok = 0;
-  mos_cache_unlock(h);
-  return ok;
-}
 static int tags_ok(void) {
   unsigned char i, j;
   for (i = 0; i < nblk; i++)
@@ -99,12 +71,16 @@ int main(void) {
   F0 = __heap_bytes_free();
 
   /* a small bank-1 pool (10 units of 32 bytes) so that it can be exhausted */
-  CHECK(mos_cache_bank1((uint16_t)__c128bank1_free_start, 10, 5) == 0);
-  CHECK(mos_cache_shared(0, INIT, MAX, LOW, HIGH) == 1);    /* bad arguments */
-  CHECK(mos_cache_shared(MIN, INIT, MAX, HIGH, HIGH) == 1); /* low >= high */
-  CHECK(mos_cache_shared(MIN, INIT, MAX, HIGH, LOW) == 1);
-  CHECK(mos_cache_shared(MIN, INIT, MAX, LOW, HIGH) == 0);
-  CHECK(mos_cache_shared(MIN, INIT, MAX, LOW, HIGH) == 1); /* only once */
+  CHECK(mos_cache_bank1((uint16_t)__c128bank1_free_start, 10, 5) ==
+        MOS_CACHE_OK);
+  CHECK(mos_cache_shared(0, INIT, MAX, LOW, HIGH) ==
+        MOS_CACHE_BAD_ARGUMENT); /* bad arguments */
+  CHECK(mos_cache_shared(MIN, INIT, MAX, HIGH, HIGH) ==
+        MOS_CACHE_BAD_ARGUMENT); /* low >= high */
+  CHECK(mos_cache_shared(MIN, INIT, MAX, HIGH, LOW) == MOS_CACHE_BAD_ARGUMENT);
+  CHECK(mos_cache_shared(MIN, INIT, MAX, LOW, HIGH) == MOS_CACHE_OK);
+  CHECK(mos_cache_shared(MIN, INIT, MAX, LOW, HIGH) ==
+        MOS_CACHE_BAD_ARGUMENT);        /* only once */
   cost_init = F0 - __heap_bytes_free(); /* the pool block's cost */
   CHECK(mos_cache_pool_units(0) == INIT);
 

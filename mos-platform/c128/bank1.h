@@ -125,8 +125,11 @@ __attribute__((leaf, callback(1))) void c128_bank1_call(void (*method)(void));
 
 /// Copy size bytes from bank 0 (any ordinary memory) to bank-1 RAM at
 /// bank1_dest. Bank-1 addresses are plain integers, never pointers (see the
-/// rules above). Runs with interrupts disabled for each 16-byte chunk and
-/// costs no zero page beyond what bank-1 placement already does.
+/// rules above). The range is not checked: bank1_dest must lie in bank 1's
+/// $1000-$BFFF (below $1000 is Common RAM, which is bank 0's memory; from
+/// $C000 the KERNAL ROM and I/O are mapped), and must not overlap statically
+/// placed bank-1 content. Runs with interrupts disabled for each 16-byte chunk
+/// and costs no zero page beyond what bank-1 placement already does.
 void c128_bank1_write(unsigned short bank1_dest, const void *src,
                       unsigned short size);
 

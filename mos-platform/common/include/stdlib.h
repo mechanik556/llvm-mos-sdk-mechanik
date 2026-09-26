@@ -179,11 +179,12 @@ size_t __heap_bytes_free();
  * than the whole heap does not call the hook.
  *
  * The hook runs in the context of whoever called the allocator, so it must not
- * call malloc, calloc, realloc, aligned_alloc or operator new (or anything that
- * does), should use little stack, and should not do anything that is unsafe to
- * do from arbitrary code - in particular no KERNAL or disk I/O, which may
- * disturb a channel the caller has set up. Without a definition nothing
- * changes. */
+ * allocate: no malloc, calloc, aligned_alloc or operator new, and no realloc
+ * that grows or moves a block (or anything that does any of these). It may call
+ * free, and realloc to shrink a block, which never allocates. It should use
+ * little stack, and should not do anything that is unsafe to do from arbitrary
+ * code - in particular no KERNAL or disk I/O, which may disturb a channel the
+ * caller has set up. Without a definition nothing changes. */
 int __malloc_low_memory(size_t needed);
 
 #ifdef _MOS_SOURCE

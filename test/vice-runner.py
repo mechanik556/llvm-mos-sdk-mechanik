@@ -171,8 +171,12 @@ def main():
         else:
             first_stop = end_addr
         mon += [f"z {EXIT_STEPS:x}",
-                f'save "{p("result.bin")}" 0 {result_addr:04x} {result_addr + 7:04x}',
-                "quit"]
+                f'save "{p("result.bin")}" 0 {result_addr:04x} {result_addr + 7:04x}']
+        # Tests that use test-check.h say which check failed.
+        fail_addr = symbols.get("test_fail_line")
+        if fail_addr is not None:
+            mon.append(f'save "{p("fail.bin")}" 0 {fail_addr:04x} {fail_addr + 1:04x}')
+        mon.append("quit")
         with open(p("script.mon"), "w") as f:
             f.write("\n".join(mon) + "\n")
 
@@ -199,7 +203,12 @@ def main():
                   "reached _Exit (is test-lib-emutest linked?)")
             return 2
         if status != 0:
-            print("FAIL: the program exited with a failure status (TestFail)")
+            where = ""
+            if os.path.exists(p("fail.bin")):
+                line = int.from_bytes(strip_header(open(p("fail.bin"), "rb").read())[:2], "little")
+                if line:
+                    where = f"; the failing check is at line {line}"
+            print("FAIL: the program exited with a failure status (TestFail)" + where)
             return 1
         if check_restore:
             rcr_before = strip_header(open(p("rcr_before.bin"), "rb").read())

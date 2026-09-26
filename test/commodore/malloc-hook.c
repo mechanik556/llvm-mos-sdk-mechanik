@@ -1,3 +1,4 @@
+#include "../test-check.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,8 +14,6 @@
  * point, that a request larger than the whole heap does not call it, and that
  * freeing memory from inside it leaves the heap consistent. */
 
-size_t __set_heap_limit(size_t limit);
-size_t __heap_bytes_free(void);
 size_t __heap_limit(void);
 
 static void *reserve[8];
@@ -37,12 +36,6 @@ int __malloc_low_memory(size_t needed) {
     hook_bad = 1;
   return 1;
 }
-
-#define CHECK(c)                                                               \
-  do {                                                                         \
-    if (!(c))                                                                  \
-      return EXIT_FAILURE;                                                     \
-  } while (0)
 
 #define NF 40
 static unsigned char *filler[NF];

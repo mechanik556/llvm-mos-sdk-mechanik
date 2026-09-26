@@ -13,7 +13,6 @@
 extern char __heap_start;
 extern char __c128commoncode_save_start[];
 extern void __c128commoncode_size;
-size_t __set_heap_limit(size_t limit);
 
 MOS_C128_BANK1_DATA static volatile unsigned char counter;
 static volatile unsigned char __attribute__((section(".zp.bss"))) seen;

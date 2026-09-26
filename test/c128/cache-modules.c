@@ -1,3 +1,4 @@
+#include "../test-check.h"
 #include <cache.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -7,12 +8,6 @@
  * (bank 1 as overflow), relocated by the load delta, evicted cold-first when
  * the pool is full, and un-relocated on eviction so that a self-modified
  * operand comes back correct when the module is reloaded at another address. */
-
-#define CHECK(c)                                                               \
-  do {                                                                         \
-    if (!(c))                                                                  \
-      return EXIT_FAILURE;                                                     \
-  } while (0)
 
 unsigned char m_add1(unsigned char), m_cb(unsigned char), m_add7(unsigned char),
     m_r_entry(unsigned char), m_r_viaptr(unsigned char),
@@ -33,7 +28,7 @@ int main(void) {
   mos_cache_handle_t h;
   unsigned char *p;
 
-  CHECK(mos_cache_static(pool0, 5) == 0);
+  CHECK(mos_cache_static(pool0, 5) == MOS_CACHE_OK);
   mos_cache_set_host(5); /* the runtime's jump table, for module code */
 
   /* load on first call */
@@ -54,9 +49,9 @@ int main(void) {
   r_at = __mos_mt_addr[2];
 
   /* fill the pools so that R is evicted, then reload it elsewhere */
-  CHECK(mos_cache_module_evict(2) == 0);
+  CHECK(mos_cache_module_evict(2) == MOS_CACHE_OK);
   CHECK(!(__mos_mt_addr[2] >> 8));
-  CHECK(mos_cache_module_evict(2) == 2); /* not resident */
+  CHECK(mos_cache_module_evict(2) == MOS_CACHE_NOT_RESIDENT); /* not resident */
   h = mos_cache_malloc(20);
   CHECK(h && (p = mos_cache_lock(h)) != 0);
   p[0] = 1;
@@ -75,16 +70,18 @@ int main(void) {
   p = mos_cache_lock(h);
   CHECK(p && p[0] == 2);
   mos_cache_unlock(h);
-  CHECK(m_r_try_evict() == 1);
+  CHECK(m_r_try_evict() == MOS_CACHE_PINNED);
   CHECK(__mos_mt_addr[2] >> 8); /* R is still resident */
 
   /* a module id the table does not have: the gate fails, calling nothing */
-  CHECK(m_no_such_module() == 3);
-  CHECK(mos_cache_module_load(99, 0) == 3);
-  CHECK(mos_cache_module_evict(99) == 4);
-  CHECK(mos_cache_module_evict(5) == 3);   /* the host is static */
-  CHECK(mos_cache_module_load(0, 0) == 0); /* already resident: nothing to do */
-  CHECK(mos_cache_module_load(5, 0) == 3);
+  CHECK(m_no_such_module() == MOS_CACHE_NO_SUCH_MODULE);
+  CHECK(mos_cache_module_load(99, 0) == MOS_CACHE_NO_SUCH_MODULE);
+  CHECK(mos_cache_module_evict(99) == MOS_CACHE_NO_SUCH_MODULE);
+  CHECK(mos_cache_module_evict(5) ==
+        MOS_CACHE_STATIC_MODULE); /* the host is static */
+  CHECK(mos_cache_module_load(0, 0) ==
+        MOS_CACHE_OK); /* already resident: nothing to do */
+  CHECK(mos_cache_module_load(5, 0) == MOS_CACHE_STATIC_MODULE);
 
   /* module loads are not automatic-polling safe points: they run inside the
    * gate with interrupts disabled */
@@ -92,7 +89,7 @@ int main(void) {
     unsigned char svc;
     mos_cache_auto_poll(1);
     svc = mos_cache_stats.services;
-    CHECK(mos_cache_module_evict(0) == 0);
+    CHECK(mos_cache_module_evict(0) == MOS_CACHE_OK);
     CHECK(m_add1(1) == 2); /* loads A again */
     CHECK(mos_cache_stats.services == svc);
     mos_cache_auto_poll(0);

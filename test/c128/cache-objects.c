@@ -1,3 +1,5 @@
+#include "../test-check.h"
+#include "cache-test.h"
 #include <cache.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -10,36 +12,7 @@
  * locked unlocked objects the other way; a locked object never moves; running
  * out of room returns 0/NULL and loses nothing; freeing recovers the space. */
 
-#define CHECK(c)                                                               \
-  do {                                                                         \
-    if (!(c))                                                                  \
-      return EXIT_FAILURE;                                                     \
-  } while (0)
-
 static unsigned char pool0[5 * 32];
-
-static int fill(mos_cache_handle_t h, unsigned n, unsigned char seed) {
-  unsigned char *p = mos_cache_lock(h);
-  unsigned i;
-  if (!p)
-    return 0;
-  for (i = 0; i < n; i++)
-    p[i] = (unsigned char)(seed + i * 7);
-  mos_cache_unlock(h);
-  return 1;
-}
-static int check(mos_cache_handle_t h, unsigned n, unsigned char seed) {
-  unsigned char *p = mos_cache_lock(h);
-  unsigned i;
-  int ok = 1;
-  if (!p)
-    return 0;
-  for (i = 0; i < n; i++)
-    if (p[i] != (unsigned char)(seed + i * 7))
-      ok = 0;
-  mos_cache_unlock(h);
-  return ok;
-}
 
 static mos_cache_handle_t o[5], big, g[64];
 
@@ -47,9 +20,24 @@ int main(void) {
   unsigned i, n;
   unsigned char *p;
 
-  CHECK(mos_cache_static(pool0, 5) == 0);
-  CHECK(mos_cache_static(pool0, 5) == 1); /* only once */
+  /* bank 1's pool: out-of-range choices are refused and change nothing */
+  CHECK(mos_cache_bank1(0x0FF0, 4, 5) ==
+        MOS_CACHE_BAD_ARGUMENT); /* Common RAM */
+  CHECK(mos_cache_bank1(0xB000, 200, 5) ==
+        MOS_CACHE_BAD_ARGUMENT); /* past $C000 */
+  CHECK(mos_cache_bank1(0xFF00, 200, 10) == MOS_CACHE_BAD_ARGUMENT); /* wraps */
+  CHECK(mos_cache_bank1(0x2000, 4, 4) ==
+        MOS_CACHE_BAD_ARGUMENT);        /* unit size */
+  CHECK(mos_cache_pool_units(1) > 100); /* still the default pool */
+
+  CHECK(mos_cache_static(pool0, 5) == MOS_CACHE_OK);
+  CHECK(mos_cache_static(pool0, 5) == MOS_CACHE_BAD_ARGUMENT); /* only once */
   CHECK(mos_cache_pool_units(0) == 5);
+  /* any non-zero bank argument means bank 1 */
+  CHECK(mos_cache_pool_units(2) == mos_cache_pool_units(1));
+  CHECK(mos_cache_free_units(2) == mos_cache_free_units(1));
+  CHECK(mos_cache_max_run(200) == mos_cache_max_run(1));
+  CHECK(mos_cache_pool_base(2) == mos_cache_pool_base(1));
   CHECK(mos_cache_pool_units(1) > 100); /* the default bank-1 pool is large */
   CHECK(mos_cache_pool_base(1) >= 0x1000);
 
@@ -81,7 +69,8 @@ int main(void) {
   /* a locked object is pinned: it stays where it is while others move */
   p = mos_cache_lock(big);
   CHECK(p && mos_cache_handle_locks(big) == 1);
-  CHECK(mos_cache_free(big) == 1); /* cannot free a locked object */
+  CHECK(mos_cache_free(big) ==
+        MOS_CACHE_LOCKED); /* cannot free a locked object */
   for (i = 0; i < 5; i++)
     CHECK(check(o[i], 20, 0x40 + i)); /* bring each through bank 0 in turn */
   CHECK(mos_cache_handle_bank(big) == 0 &&
@@ -91,26 +80,28 @@ int main(void) {
   CHECK(mos_cache_handle_locks(big) == 0);
 
   /* invalid handles are rejected everywhere, not just by free */
-  CHECK(mos_cache_free(0) == 2);
-  CHECK(mos_cache_free(33) == 2);
+  CHECK(mos_cache_free(0) == MOS_CACHE_INVALID_HANDLE);
+  CHECK(mos_cache_free(33) == MOS_CACHE_INVALID_HANDLE);
   CHECK(mos_cache_lock(0) == NULL);
   CHECK(mos_cache_lock(33) == NULL);
-  CHECK(mos_cache_handle_bank(0) == 0xFF && mos_cache_handle_bank(33) == 0xFF);
+  CHECK(mos_cache_handle_bank(0) == MOS_CACHE_INVALID_BANK &&
+        mos_cache_handle_bank(33) == MOS_CACHE_INVALID_BANK);
   CHECK(mos_cache_malloc(0) == 0);
   mos_cache_unlock(0); /* ignored */
   mos_cache_unlock(33);
   CHECK(mos_cache_handle_locks(0) == 0 && mos_cache_handle_locks(33) == 0);
 
   /* no module table: every module id is invalid */
-  CHECK(mos_cache_module_evict(0) == 4);
-  CHECK(mos_cache_module_load(0, 0) == 3);
+  CHECK(mos_cache_module_evict(0) == MOS_CACHE_NO_SUCH_MODULE);
+  CHECK(mos_cache_module_load(0, 0) == MOS_CACHE_NO_SUCH_MODULE);
 
   /* out of memory: fill both pools with 3-unit objects, then one more fails
    * cleanly (0), the objects are intact, and freeing one makes room again */
   for (i = 0; i < 5; i++)
     mos_cache_free(o[i]);
   mos_cache_free(big);
-  CHECK(mos_cache_handle_bank(big) == 0xFF); /* a freed handle is invalid */
+  CHECK(mos_cache_handle_bank(big) ==
+        MOS_CACHE_INVALID_BANK); /* a freed handle is invalid */
   for (n = 0; n < 64; n++) {
     g[n] = mos_cache_malloc(70);
     if (!g[n])
@@ -121,7 +112,7 @@ int main(void) {
   CHECK(mos_cache_malloc(70) == 0);
   for (i = 0; i < n; i++)
     CHECK(check(g[i], 70, 0x10 + i));
-  CHECK(mos_cache_free(g[0]) == 0);
+  CHECK(mos_cache_free(g[0]) == MOS_CACHE_OK);
   g[0] = mos_cache_malloc(70);
   CHECK(g[0]);
   for (i = 0; i < n; i++)

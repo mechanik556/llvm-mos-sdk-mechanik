@@ -28,8 +28,8 @@
 ; except I come from the callee; I is restored to the caller's value.
 ; Failure (module cannot be loaded, active-module stack full, no such module):
 ; nothing is called; returns to the call site with carry SET, A = error code
-; (1 = out of memory, 2 = nesting too deep, 3 = no such module), X/Y as
-; passed, I restored.
+; (the MOS_CACHE_* codes of cache.h: 1 no room, 2 nesting too deep, 3 no such
+; module), X/Y as passed, I restored.
 
 .include "c128.inc"
 .include "imag.inc"
@@ -106,7 +106,7 @@ __mos_call_gate:
 	ldx gt_mod
 	cpx __mos_mt_count   ; a module the table does not have?
 	bcc .Lknown
-	lda #3
+	lda #3               ; MOS_CACHE_NO_SUCH_MODULE
 	bne .Lfail
 .Lknown:
 	txa
@@ -122,11 +122,11 @@ __mos_call_gate:
 	tay
 .Lres:
 	lda #1
-	sta __mos_mt_ref,x         ; CLOCK reference bit: used since the eviction sweep
+	sta __mos_mt_ref,x   ; CLOCK reference bit: used since the eviction sweep
 	lda __mos_gate_ams_top
 	cmp #AMS_MAX
 	bcc .Lroom
-	lda #2
+	lda #2               ; MOS_CACHE_TOO_DEEP
 	bne .Lfail
 .Lroom:
 	inc __mos_mt_active,x

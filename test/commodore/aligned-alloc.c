@@ -1,3 +1,4 @@
+#include "../test-check.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,15 +12,6 @@
  * Regression test: aligned_alloc used to re-insert the free chunk it had found
  * without removing it from the free list first, split it without leaving room
  * for the free chunk in front, and allocate the inflated search size. */
-
-size_t __set_heap_limit(size_t limit);
-size_t __heap_bytes_free(void);
-
-#define CHECK(c)                                                               \
-  do {                                                                         \
-    if (!(c))                                                                  \
-      return EXIT_FAILURE;                                                     \
-  } while (0)
 
 static int holds(const void *p, unsigned char n, unsigned char tag) {
   const unsigned char *q = p;

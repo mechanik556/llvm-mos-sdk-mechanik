@@ -1,3 +1,4 @@
+#include "../test-check.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,9 +13,6 @@
  * size as (new - old) instead of (old - new) and, for a shrink too small to
  * leave a chunk of its own, still reduced the chunk size and orphaned the tail.
  */
-
-size_t __set_heap_limit(size_t limit);
-size_t __heap_bytes_free(void);
 
 static void fill(void *p, unsigned char n, unsigned char tag) {
   memset(p, tag, n);
@@ -32,12 +30,6 @@ static int disjoint(const void *a, unsigned char an, const void *b,
   uintptr_t x = (uintptr_t)a, y = (uintptr_t)b;
   return x + an <= y || y + bn <= x;
 }
-
-#define CHECK(c)                                                               \
-  do {                                                                         \
-    if (!(c))                                                                  \
-      return EXIT_FAILURE;                                                     \
-  } while (0)
 
 int main(void) {
   unsigned char *a, *b, *c, *d;

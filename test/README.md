@@ -26,7 +26,10 @@ How to report results from a test case:
 ## C64 and C128 tests (VICE)
 
 `test/c128` holds the Commodore 128 tests, and `test/c64` a smaller set for the
-Commodore 64 (the exit-path tests below, run under VICE's `x64sc`). They are built and registered like
+Commodore 64 (the exit-path tests below, run under VICE's `x64sc`). Tests that
+are the same on both machines (the heap tests: `malloc`, `realloc`,
+`aligned_alloc`, the low-memory hook, C++ `new`) live once in `test/commodore`
+and are registered by both directories. They are built and registered like
 the other platforms' (`ninja test-c128`, or `ninja test` for everything), and
 contain three kinds of test:
 
@@ -41,6 +44,16 @@ contain three kinds of test:
   program through its exit handlers and `_Exit` (a program that hangs or never
   exits fails), reads `test_result` from RAM through the VICE monitor, and
   decodes it.
+
+  `test-check.h` provides `CHECK(condition)` for such tests: a false condition
+  records its line in `test_fail_line` and returns `EXIT_FAILURE`, and
+  `vice-runner.py` prints that line when the test fails.
+
+  The C128 cache runtime (`mos-platform/c128/cache.h`) is covered by
+  `cache-objects`, `cache-shared`, `cache-tiers`, `cache-tiers-static` and
+  `cache-modules` (hand-written relocatable modules, `cache-modules.s`);
+  `cache-not-linked-*` check that a program which does not use it does not
+  link it.
 
   Do not call `test_set_result()` and then `return 0`: on this platform
   returning from `main` goes through `exit()` to `_Exit(0)`, which overwrites

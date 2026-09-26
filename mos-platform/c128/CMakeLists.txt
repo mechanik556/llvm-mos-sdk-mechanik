@@ -40,6 +40,9 @@ add_platform_library(c128-c
   cache-host.s
 )
 target_include_directories(c128-c BEFORE PUBLIC .)
+# The platform library is built without the platform's clang config, so it does
+# not get this from there; the headers it shares with user code insist on it.
+target_compile_definitions(c128-c PRIVATE __C128__)
 target_include_directories(c128-c BEFORE PUBLIC ../c64)
 target_link_libraries(c128-c PRIVATE common-asminc)
 

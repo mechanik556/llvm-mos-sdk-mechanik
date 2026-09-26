@@ -33,6 +33,8 @@ _Static_assert(NOBJ <= 32, "spill_one tracks objects in a 32-bit mask");
 #define BANK0_SHIFT 5         // bank 0's pool always uses 32-byte units
 #define DEFAULT_BANK1_SHIFT 7 // smallest default unit: 128 bytes
 #define MAX_BANK1_SHIFT 10
+#define BANK1_LOW 0x1000L  // first bank-1 address that is not Common RAM
+#define BANK1_HIGH 0xC000L // where KERNAL ROM and I/O begin
 
 // ---- Module table (supplied by the program; see cache.h) -------------------
 // Weak defaults describe "no modules", so a program without a module table
@@ -198,22 +200,27 @@ static void ensure_bank1(void) {
 }
 
 uint8_t mos_cache_bank1(uint16_t base, uint8_t units, uint8_t unit_shift) {
+  uint32_t end = (uint32_t)base + ((uint32_t)units << unit_shift);
   if (unit_shift < 5 || unit_shift > MAX_BANK1_SHIFT || units > MAX_UNITS ||
       bank1_ready)
-    return 1;
+    return MOS_CACHE_BAD_ARGUMENT;
+  // Bank 1's $0000-$0FFF is Common RAM, the same memory as bank 0's, and
+  // KERNAL ROM and I/O start at $C000: the pool must lie between them.
+  if (base < BANK1_LOW || end > BANK1_HIGH)
+    return MOS_CACHE_BAD_ARGUMENT;
   pool_base[1] = base;
   pool_units[1] = units;
   pool_shift[1] = unit_shift;
   bank1_ready = 1;
-  return 0;
+  return MOS_CACHE_OK;
 }
 
 uint8_t mos_cache_static(void *pool, uint8_t units) {
   if (!pool || !units || units > MAX_UNITS || pool_base[0])
-    return 1;
+    return MOS_CACHE_BAD_ARGUMENT;
   pool_base[0] = (uint16_t)pool;
   pool_units[0] = units;
-  return 0;
+  return MOS_CACHE_OK;
 }
 
 // ---- Modules ----------------------------------------------------------------
@@ -246,26 +253,25 @@ static void apply_relocs(uint8_t bank, uint16_t base, uint16_t table,
 }
 
 // Called with the id of every module evicted (a diagnostic hook; weak, doing
-// nothing by default).
+// nothing by default). Evictions also happen inside malloc's reclaim path, so
+// the hook may run there and must obey the same rules (cache.h).
 __attribute__((weak)) void mos_cache_on_evict(uint8_t id) { (void)id; }
 
-// Returns 0 ok; 1 = pinned (active); 2 = not resident; 3 = static; 4 = no such
-// module.
 uint8_t mos_cache_module_evict(uint8_t id) {
   uint16_t addr, size;
   uint8_t bank, units;
   if (id >= NMODS)
-    return 4;
+    return MOS_CACHE_NO_SUCH_MODULE;
   addr = __mos_mt_addr[id];
   size = __mos_mt_size[id];
   bank = MOD_IN_BANK1(id);
   units = units_of(bank, size);
   if (!__mos_mt_img[id])
-    return 3;
+    return MOS_CACHE_STATIC_MODULE;
   if (!(addr >> 8))
-    return 2;
+    return MOS_CACHE_NOT_RESIDENT;
   if (__mos_mt_active[id])
-    return 1;
+    return MOS_CACHE_PINNED;
   // Un-relocate in place by delta subtraction, then write the canonical image
   // back to the backing store (the program image here).
   apply_relocs(bank, addr, __mos_mt_reloc[id],
@@ -279,7 +285,7 @@ uint8_t mos_cache_module_evict(uint8_t id) {
   __mos_mt_cr[id] = 0;
   mos_cache_stats.mod_evictions++;
   mos_cache_on_evict(id);
-  return 0;
+  return MOS_CACHE_OK;
 }
 
 // Oldest resident, non-static, inactive module in `bank` (optionally only those
@@ -318,6 +324,10 @@ static struct {
   uint8_t bank, lock, used;
 } ho[NOBJ];
 static uint16_t ostamp; // last-lock stamp source (LRU for objects)
+
+static uint8_t valid_handle(mos_cache_handle_t handle) {
+  return handle && handle <= NOBJ && ho[handle - 1].used;
+}
 
 static void poll_point(void);
 
@@ -358,6 +368,7 @@ static uint8_t spill_one(uint8_t bank) {
 
 uint8_t mos_cache_free_units(uint8_t bank) {
   uint8_t u, n = 0;
+  bank = bank != 0;
   if (bank)
     ensure_bank1();
   for (u = 0; u < pool_units[bank]; u++)
@@ -369,6 +380,7 @@ uint8_t mos_cache_free_units(uint8_t bank) {
 // Longest run of free units.
 uint8_t mos_cache_max_run(uint8_t bank) {
   uint8_t u, run = 0, best = 0;
+  bank = bank != 0;
   if (bank)
     ensure_bank1();
   for (u = 0; u < pool_units[bank]; u++) {
@@ -548,19 +560,19 @@ static uint8_t place(uint8_t first, uint8_t only, uint16_t size,
   return idx;
 }
 
-// Returns 0 ok (or already resident); 1 = no room; 3 = no such module, or a
-// static one. (The codes are the call gate's: 2 is its "nesting too deep".)
 uint8_t mos_cache_module_load(uint8_t id, uint8_t caller_bank) {
   uint16_t size;
   uint8_t bank = 0, idx;
-  if (id >= NMODS || !__mos_mt_img[id])
-    return 3;
+  if (id >= NMODS)
+    return MOS_CACHE_NO_SUCH_MODULE;
+  if (!__mos_mt_img[id])
+    return MOS_CACHE_STATIC_MODULE;
   if (MOD_RESIDENT(id))
-    return 0;
+    return MOS_CACHE_OK;
   size = __mos_mt_size[id];
   idx = place(caller_bank ? 1 : 0, 0xFF, size, &bank);
   if (idx == 0xFF)
-    return 1;
+    return MOS_CACHE_NO_ROOM;
   {
     uint16_t dest = unit_addr(bank, idx);
     if (bank)
@@ -574,7 +586,7 @@ uint8_t mos_cache_module_load(uint8_t id, uint8_t caller_bank) {
   }
   __mos_mt_stamp[id] = ++stamp_clock;
   mos_cache_stats.mod_loads++;
-  return 0;
+  return MOS_CACHE_OK;
 }
 
 mos_cache_handle_t mos_cache_malloc(uint16_t size) {
@@ -597,15 +609,15 @@ mos_cache_handle_t mos_cache_malloc(uint16_t size) {
 }
 
 uint8_t mos_cache_free(mos_cache_handle_t handle) {
-  if (!handle || handle > NOBJ || !ho[handle - 1].used)
-    return 2;
+  if (!valid_handle(handle))
+    return MOS_CACHE_INVALID_HANDLE;
   if (ho[handle - 1].lock)
-    return 1;
+    return MOS_CACHE_LOCKED;
   release(ho[handle - 1].bank,
           unit_of(ho[handle - 1].bank, ho[handle - 1].addr),
           units_of(ho[handle - 1].bank, ho[handle - 1].size));
   ho[handle - 1].used = 0;
-  return 0;
+  return MOS_CACHE_OK;
 }
 
 // mos_cache_lock cannot switch $FF00 and hand back a bank-1 pointer: the
@@ -617,8 +629,9 @@ uint8_t mos_cache_free(mos_cache_handle_t handle) {
 void *mos_cache_lock_in(mos_cache_handle_t handle, uint8_t caller_bank) {
   uint8_t units, idx, nb = 0;
   uint16_t dst;
+  caller_bank = caller_bank != 0;
   poll_point();
-  if (!handle || handle > NOBJ || !ho[handle - 1].used)
+  if (!valid_handle(handle))
     return 0;
   if (ho[handle - 1].bank != caller_bank) {
     uint8_t from = ho[handle - 1].bank;
@@ -644,7 +657,7 @@ void *mos_cache_lock(mos_cache_handle_t handle) {
 }
 
 void mos_cache_unlock(mos_cache_handle_t handle) {
-  if (handle && handle <= NOBJ && ho[handle - 1].lock)
+  if (valid_handle(handle) && ho[handle - 1].lock)
     ho[handle - 1].lock--;
 }
 
@@ -656,20 +669,19 @@ uint8_t mos_cache_defrag(void) {
 }
 
 uint8_t mos_cache_pool_units(uint8_t bank) {
+  bank = bank != 0;
   if (bank)
     ensure_bank1();
   return pool_units[bank];
 }
 uint16_t mos_cache_pool_base(uint8_t bank) {
+  bank = bank != 0;
   if (bank)
     ensure_bank1();
   return pool_base[bank];
 }
-static uint8_t valid_handle(mos_cache_handle_t handle) {
-  return handle && handle <= NOBJ && ho[handle - 1].used;
-}
 uint8_t mos_cache_handle_bank(mos_cache_handle_t handle) {
-  return valid_handle(handle) ? ho[handle - 1].bank : 0xFF;
+  return valid_handle(handle) ? ho[handle - 1].bank : MOS_CACHE_INVALID_BANK;
 }
 uint8_t mos_cache_handle_locks(mos_cache_handle_t handle) {
   return valid_handle(handle) ? ho[handle - 1].lock : 0;
@@ -810,12 +822,12 @@ uint8_t mos_cache_shared(uint8_t min_units, uint8_t init_units,
   uint8_t *p;
   if (pool_base[0] || !min_units || min_units > init_units ||
       init_units > max_units || max_units > MAX_UNITS || low >= high)
-    return 1;
+    return MOS_CACHE_BAD_ARGUMENT;
   sh_busy = 1;
   p = malloc((uint16_t)init_units << BANK0_SHIFT);
   sh_busy = 0;
   if (!p)
-    return 2;
+    return MOS_CACHE_NO_MEMORY;
   pool_base[0] = (uint16_t)p;
   pool_units[0] = init_units;
   sh_min = min_units;
@@ -823,15 +835,19 @@ uint8_t mos_cache_shared(uint8_t min_units, uint8_t init_units,
   sh_low = low;
   sh_high = high;
   shared = 1;
-  return 0;
+  return MOS_CACHE_OK;
 }
 
 uint8_t mos_cache_service(void) {
   size_t free;
   uint8_t changed = 0;
   mos_cache_stats.services++;
-  if (!shared || sh_busy)
+  if (sh_busy)
     return 0;
+  if (!shared) { // static mode: only the tier's write-behind has work to do
+    mos_cache_tier_writebehind();
+    return 0;
+  }
   free = __heap_bytes_free();
   if (free < sh_low) {
     size_t units = (sh_low - free) / 32 + 1;

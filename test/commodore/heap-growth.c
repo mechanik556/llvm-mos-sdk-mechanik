@@ -11,9 +11,7 @@
 
 extern char __heap_start;
 size_t __heap_limit(void);
-size_t __set_heap_limit(size_t limit);
 size_t __get_heap_max_safe_size(void);
-size_t __heap_bytes_free(void);
 
 #define BLOCK 62
 #define MAXBLOCKS 800

@@ -1,11 +1,7 @@
+#include "../test-check.h"
 #include <new>
 #include <stdint.h>
 #include <stdlib.h>
-
-extern "C" {
-size_t __set_heap_limit(size_t limit);
-size_t __heap_bytes_free(void);
-}
 
 /* operator new/delete are thin wrappers over malloc/free: the heap is the same
  * bank-0 heap, exhaustion is reported the same way (nothrow new returns
@@ -36,12 +32,6 @@ extern "C" int __malloc_low_memory(size_t) {
   reserve = nullptr;
   return 1;
 }
-
-#define CHECK(c)                                                               \
-  do {                                                                         \
-    if (!(c))                                                                  \
-      return EXIT_FAILURE;                                                     \
-  } while (0)
 
 int main() {
   __set_heap_limit(1000);

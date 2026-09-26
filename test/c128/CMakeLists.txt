@@ -18,6 +18,7 @@ add_vice_test(bank1-copy)
 add_vice_test(cache-objects)
 add_vice_test(cache-shared)
 add_vice_test(cache-tiers)
+add_vice_test(cache-tiers-static)
 # -mreserve-zp: the gate and the bank-1 staging buffer take zero page the
 # compiler cannot see (cache.h).
 add_vice_test(cache-modules EXTRA_SOURCES cache-modules.s

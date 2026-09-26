@@ -11,12 +11,6 @@
 
 #include <stdint.h>
 
-// The platform library is built without __C128__ defined, so the public
-// headers (which insist on it) are not used for its own prototypes.
-#ifndef __C128__
-#define __C128__ 1
-#endif
-
 #include "cache.h"
 
 // Run-time copies between bank 0 and bank 1 (bank1.h, bank1-load.c).
