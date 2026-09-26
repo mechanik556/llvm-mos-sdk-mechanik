@@ -52,3 +52,12 @@ target_compile_definitions(c128-c PRIVATE __C128__)
 target_include_directories(c128-c BEFORE PUBLIC ../c64)
 target_link_libraries(c128-c PRIVATE common-asminc)
 
+# The same runtime built with 16-bit unit indices (MOS_CACHE_WIDE), as a separate
+# library, libcache-wide.a: link it (-lcache-wide) ahead of the default library to
+# use pools of more than 248 units, i.e. unit sizes below 256 bytes over all of
+# bank 1. It is larger, which is why it is not the default (cache.h).
+add_platform_library(c128-cache-wide cache.c)
+# (Linking c128-c gets it the include paths of the libraries merged into that.)
+target_link_libraries(c128-cache-wide PRIVATE c128-c)
+target_compile_definitions(c128-cache-wide PRIVATE __C128__ MOS_CACHE_WIDE)
+

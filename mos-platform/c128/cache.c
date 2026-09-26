@@ -34,12 +34,23 @@
 
 #define NOINLINE __attribute__((noinline))
 
-// A unit index is 16 bits and NO_UNIT means "none". Bank 1's pool is about 44
-// KB, which is 1408 units of the smallest unit size (32 bytes).
+// A unit index is a byte, or, in the "wide" build (MOS_CACHE_WIDE, the library
+// libcache-wide.a: see cache.h), 16 bits. NO_UNIT means "none". A byte index
+// limits a pool to MAX_UNITS = 248 units (a multiple of 8, so that a scan that
+// steps a bitmap byte at a time cannot wrap); with the default 256-byte units
+// that is enough for all of bank 1 (about 176 units). Units of 32 bytes over
+// the whole of bank 1 (about 1400 units) need the wide build, which is larger.
+#ifdef MOS_CACHE_WIDE
 typedef uint16_t unit_t;
 #define NO_UNIT 0xFFFF
 #define MAX_UNITS 1536      // in bank 1's pool
 #define MAX_BANK0_UNITS 254 // in bank 0's pool (its API takes bytes)
+#else
+typedef uint8_t unit_t;
+#define NO_UNIT 0xFF
+#define MAX_UNITS 248
+#define MAX_BANK0_UNITS 248
+#endif
 #define NOBJ 32
 // Unit sizes are powers of two, 1 << shift bytes, chosen per bank with
 // mos_cache_units; see cache.h for why the defaults are what they are.
@@ -112,18 +123,18 @@ static void mark(uint8_t bank, unit_t start, unit_t units, uint8_t used) {
 // Unit arithmetic. These are shared by many callers, so they stay out of line:
 // the variable shifts of 16-bit values they contain are long.
 static NOINLINE unit_t units_of(uint8_t bank, uint16_t size) {
-  unit_t units = size >> pool_shift[bank];
+  uint16_t units = size >> pool_shift[bank];
   if (size & ((1 << pool_shift[bank]) - 1))
     units++;
-  return units > MAX_UNITS ? NO_UNIT : units; // NO_UNIT: fits no pool
+  return units > MAX_UNITS ? NO_UNIT : (unit_t)units; // NO_UNIT: fits no pool
 }
 
 static NOINLINE uint16_t unit_addr(uint8_t bank, unit_t idx) {
-  return pool_base[bank] + (idx << pool_shift[bank]);
+  return pool_base[bank] + ((uint16_t)idx << pool_shift[bank]);
 }
 
 static NOINLINE unit_t unit_of(uint8_t bank, uint16_t addr) {
-  return (addr - pool_base[bank]) >> pool_shift[bank];
+  return (unit_t)((addr - pool_base[bank]) >> pool_shift[bank]);
 }
 
 // The bitmap is scanned a byte at a time where it can be: a byte of 8 used
@@ -189,31 +200,31 @@ static NOINLINE void xcopy(uint8_t dbank, uint16_t dst, uint8_t sbank,
 extern char __c128bank1_free_start[];
 extern char __c128bank1_free_end[];
 
+// The units of size 1 << shift that fit in that region (its first one is at
+// region_start, the region's start rounded up to a unit).
+static uint16_t region_start;
+static uint16_t region_units(uint8_t shift) {
+  uint16_t mask = ((uint16_t)1 << shift) - 1;
+  uint16_t end = (uint16_t)__c128bank1_free_end;
+  region_start = ((uint16_t)__c128bank1_free_start + mask) & ~mask;
+  return region_start < end ? (end - region_start) >> shift : 0;
+}
+
 static void ensure_bank1(void) {
-  uint16_t start, end, units;
-  uint8_t shift = pool_shift[1];
   if (bank1_ready)
     return;
-  end = (uint16_t)__c128bank1_free_end;
-  // The configured unit size, or the smallest larger one with which the whole
-  // region fits in MAX_UNITS units.
-  for (;; shift++) {
-    uint16_t mask = ((uint16_t)1 << shift) - 1;
-    start = ((uint16_t)__c128bank1_free_start + mask) & ~mask;
-    units = start < end ? (end - start) >> shift : 0;
-    if (units <= MAX_UNITS || shift == MAX_SHIFT)
-      break;
-  }
-  pool_base[1] = start;
-  pool_units[1] = pool_free[1] = units > MAX_UNITS ? MAX_UNITS : units;
-  pool_shift[1] = shift;
+  pool_units[1] = pool_free[1] = region_units(pool_shift[1]);
+  pool_base[1] = region_start;
   bank1_ready = 1;
 }
 
+// The unit sizes must let the default bank-1 pool fit: in the narrow build
+// (byte indices) that is at most MAX_UNITS units, which needs bank-1 units of
+// 256 bytes or more for the whole region; smaller units need the wide build.
 uint8_t mos_cache_units(uint8_t bank0_shift, uint8_t bank1_shift) {
   if (bank0_shift < MIN_SHIFT || bank0_shift > MAX_SHIFT ||
       bank1_shift < MIN_SHIFT || bank1_shift > MAX_SHIFT || pool_base[0] ||
-      bank1_ready)
+      bank1_ready || region_units(bank1_shift) > MAX_UNITS)
     return MOS_CACHE_BAD_ARGUMENT;
   pool_shift[0] = bank0_shift;
   pool_shift[1] = bank1_shift;

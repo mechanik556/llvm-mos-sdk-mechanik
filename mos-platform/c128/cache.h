@@ -57,9 +57,9 @@
 // nothing. The call gate adds about 240 bytes to the Common-RAM code area (512
 // bytes by default, of which bank-1 support itself uses about 60).
 //
-// RAM. The runtime's own data is about 500 bytes: the object table (256), and
-// the allocation maps (32 for bank 0 and 192 for bank 1, sized for the largest
-// pool, though the default 256-byte units need 22) plus a little state.
+// RAM. The runtime's own data is about 330 bytes: the object table (256), the
+// two allocation maps (31 bytes each) and a little state; the wide build (see
+// "Index width") has bigger maps, about 500 bytes in all.
 //
 // Zero page. The call gate (linked only by programs that use it) costs 13 more
 // bytes. The zero-page pool is about 102 bytes shared with the compiler's own
@@ -91,9 +91,21 @@
 // object-size histograms, which no open-source C64/C128 program is known to
 // publish.
 //
-// Limits. At most 32 objects live at once; bank 0's pool has at most 254 units
-// and bank 1's at most 1536; the gate nests at most 16 module calls deep; the
-// counters in mos_cache_stats are 8 bits and wrap.
+// Index width. Units are numbered with a byte, which limits a pool to 248 units
+// and keeps the runtime small (about 15% less code and 170 bytes less RAM than
+// with 16-bit indices). That is enough for all of bank 1 in the default
+// 256-byte units. Bank-1 units smaller than 256 bytes over the whole region
+// (which need up to about 1400 units) need the wide build, the same runtime
+// with 16-bit indices: link libcache-wide.a ahead of the default library
+// (-lcache-wide). The unit size and the index width go together:
+// mos_cache_units refuses a bank-1 unit size the narrow build cannot number,
+// and says so with MOS_CACHE_BAD_ARGUMENT. Explicit small regions
+// (mos_cache_bank1) can use small units in either build.
+//
+// Limits. At most 32 objects live at once; a pool has at most 248 units (in the
+// wide build bank 0's has at most 254 and bank 1's 1536); the gate nests at
+// most 16 module calls deep; the counters in mos_cache_stats are 8 bits and
+// wrap.
 //
 // Not thread-safe and not interrupt-safe: call from ordinary code, not from an
 // IRQ or NMI handler.
@@ -152,18 +164,22 @@ typedef uint16_t mos_cache_handle_t;
 /// bank1_shift bytes, each shift from 5 to 10 (32 to 1024 bytes). The defaults,
 /// used if this is not called, are 5 and 8 (see "Unit sizes" above). Only
 /// before the pools are set up: before mos_cache_static or mos_cache_shared,
-/// and before bank 1's pool is chosen (mos_cache_bank1) or first used. Returns
-/// MOS_CACHE_OK or MOS_CACHE_BAD_ARGUMENT.
+/// and before bank 1's pool is chosen (mos_cache_bank1) or first used. The
+/// bank-1 size must let all of bank 1 above the static content be numbered: in
+/// the default (narrow) build that means 256-byte units or larger (see "Index
+/// width"). Returns MOS_CACHE_OK or MOS_CACHE_BAD_ARGUMENT.
 uint8_t mos_cache_units(uint8_t bank0_shift, uint8_t bank1_shift);
 
 /// Bank 0's pool is `units` units (of bank 0's unit size) of memory at `pool`,
-/// which must stay valid and unused by anything else. `units` is at most 254
-/// and the pool at most 64 KB. Returns MOS_CACHE_OK or MOS_CACHE_BAD_ARGUMENT.
+/// which must stay valid and unused by anything else. `units` is at most 248
+/// (254 in the wide build) and the pool at most 64 KB. Returns MOS_CACHE_OK or
+/// MOS_CACHE_BAD_ARGUMENT.
 uint8_t mos_cache_static(void *pool, uint8_t units);
 
 /// Bank 0's pool is a block of the malloc heap: `init_units` units (of bank 0's
 /// unit size) to start with, never fewer than `min_units` or more than
-/// `max_units` (at most 254, and at most 64 KB), and mos_cache_service keeps
+/// `max_units` (at most 248, 254 in the wide build, and at most 64 KB), and
+/// mos_cache_service keeps
 /// the heap's free bytes at least `low` (yielding pool space if not) and, when
 /// it grows the pool, at least `high` afterwards. Requires `low` < `high`. Only
 /// while bank 0's pool is unused. Returns MOS_CACHE_OK, MOS_CACHE_BAD_ARGUMENT
@@ -173,13 +189,12 @@ uint8_t mos_cache_shared(uint8_t min_units, uint8_t init_units,
                          uint8_t max_units, uint16_t low, uint16_t high);
 
 /// Choose bank 1's pool: `units` units of (1 << unit_shift) bytes at the bank-1
-/// address `base` (5 <= unit_shift <= 10; units at most 1536). The default,
-/// used if this is not called, is all of bank 1 above statically placed content
-/// in bank 1's unit size (or a larger one if it would need more than 1536
-/// units). The pool must lie in bank 1's
-/// $1000-$BFFF (below $1000 is Common RAM, shared with bank 0; KERNAL ROM and
-/// I/O begin at $C000). Returns MOS_CACHE_OK or MOS_CACHE_BAD_ARGUMENT (also if
-/// the pool was already chosen or used).
+/// address `base` (5 <= unit_shift <= 10; units at most 248, 1536 in the wide
+/// build). The default, used if this is not called, is all of bank 1 above
+/// statically placed content in bank 1's unit size. The pool must lie in bank
+/// 1's $1000-$BFFF (below $1000 is Common RAM, shared with bank 0; KERNAL ROM
+/// and I/O begin at $C000). Returns MOS_CACHE_OK or MOS_CACHE_BAD_ARGUMENT
+/// (also if the pool was already chosen or used).
 uint8_t mos_cache_bank1(uint16_t base, uint16_t units, uint8_t unit_shift);
 
 // ---- Objects ----------------------------------------------------------------

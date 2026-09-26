@@ -17,14 +17,22 @@ add_vice_test(bank1-state)
 add_vice_test(bank1-copy)
 add_vice_test(cache-objects)
 add_vice_test(cache-shared)
-add_vice_test(cache-units)
+add_vice_test(cache-narrow)
+# The default runtime uses byte unit indices; libcache-wide.a (-lcache-wide) is
+# the same runtime with 16-bit indices. Unit sizes below 256 bytes over all of
+# bank 1 need it (cache-units); the other cache tests run against both.
+add_vice_test(cache-units LINK_OPTIONS -lcache-wide)
 add_vice_test(cache-units-shared)
+add_vice_test(cache-objects-wide SOURCE cache-objects.c LINK_OPTIONS -lcache-wide)
+add_vice_test(cache-shared-wide SOURCE cache-shared.c LINK_OPTIONS -lcache-wide)
 add_vice_test(cache-tiers)
 add_vice_test(cache-tiers-static)
 # -mreserve-zp: the gate and the bank-1 staging buffer take zero page the
 # compiler cannot see (cache.h).
 add_vice_test(cache-modules EXTRA_SOURCES cache-modules.s
   LINK_OPTIONS -mreserve-zp=29)
+add_vice_test(cache-modules-wide SOURCE cache-modules.c EXTRA_SOURCES cache-modules.s
+  LINK_OPTIONS -mreserve-zp=29 -lcache-wide)
 add_vice_test(bank1-isolation)
 add_vice_test(bank1-rcr)
 add_vice_test(bank1-malloc)
