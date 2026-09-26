@@ -9,7 +9,6 @@
 
 typedef uint16_t mos_cache_handle_t;
 mos_cache_handle_t mos_cache_malloc(uint16_t size);
-uint8_t pool_free_units(uint8_t bank);
 void mod_init(void);
 void mod_clear_refs(void);
 unsigned char m_double(unsigned char), m_cb(unsigned char), m_f_add7(unsigned char), m_r_call_sm(void), m_calld(unsigned char);

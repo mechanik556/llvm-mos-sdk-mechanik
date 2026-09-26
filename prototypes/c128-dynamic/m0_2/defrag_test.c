@@ -9,7 +9,6 @@ mos_cache_handle_t mos_cache_malloc(uint16_t size);
 uint8_t mos_cache_free(mos_cache_handle_t h);
 void *mos_cache_lock(mos_cache_handle_t h);
 void mos_cache_unlock(mos_cache_handle_t h);
-uint8_t obj_bank(mos_cache_handle_t h), pool_free_units(uint8_t bank), pool_max_run(uint8_t bank);
 uint8_t mos_cache_defrag(void), mod_evict(uint8_t id);
 void mod_init(void);
 unsigned char m_r_call_sm(void), m_r_sm_to_b(void), m_r_entry(unsigned char), m_r_viaptr(unsigned char), m_r_lohi(unsigned char);

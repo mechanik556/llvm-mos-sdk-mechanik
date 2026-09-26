@@ -66,9 +66,9 @@
 // linking such a program:
 //   -mreserve-zp=29     (16 for bank 1 + 13 for the gate; 16 without the gate)
 //
-// Limits. At most 32 objects live at once; each pool has at most 254 units; the
-// gate nests at most 16 module calls deep; the counters in mos_cache_stats are
-// 8 bits and wrap.
+// Limits. At most 32 objects live at once; bank 0's pool has at most 254 units
+// and bank 1's at most 1536; the gate nests at most 16 module calls deep; the
+// counters in mos_cache_stats are 8 bits and wrap.
 //
 // Not thread-safe and not interrupt-safe: call from ordinary code, not from an
 // IRQ or NMI handler.
@@ -140,13 +140,13 @@ uint8_t mos_cache_shared(uint8_t min_units, uint8_t init_units,
                          uint8_t max_units, uint16_t low, uint16_t high);
 
 /// Choose bank 1's pool: `units` units of (1 << unit_shift) bytes at the bank-1
-/// address `base` (5 <= unit_shift <= 10; units at most 254). The default, used
-/// if this is not called, is all of bank 1 above statically placed content,
-/// with the smallest unit size (128 to 1024 bytes) that lets it fit in 254
-/// units. The pool must lie in bank 1's $1000-$BFFF (below $1000 is Common RAM,
-/// shared with bank 0; KERNAL ROM and I/O begin at $C000). Returns MOS_CACHE_OK
-/// or MOS_CACHE_BAD_ARGUMENT (also if the pool was already chosen or used).
-uint8_t mos_cache_bank1(uint16_t base, uint8_t units, uint8_t unit_shift);
+/// address `base` (5 <= unit_shift <= 10; units at most 1536). The default,
+/// used if this is not called, is all of bank 1 above statically placed content
+/// in 32-byte units, like bank 0's pool. The pool must lie in bank 1's
+/// $1000-$BFFF (below $1000 is Common RAM, shared with bank 0; KERNAL ROM and
+/// I/O begin at $C000). Returns MOS_CACHE_OK or MOS_CACHE_BAD_ARGUMENT (also if
+/// the pool was already chosen or used).
+uint8_t mos_cache_bank1(uint16_t base, uint16_t units, uint8_t unit_shift);
 
 // ---- Objects ----------------------------------------------------------------
 
@@ -219,11 +219,11 @@ struct mos_cache_stats {
 extern struct mos_cache_stats mos_cache_stats;
 
 /// Pool geometry: size in units, and the address of unit 0, of `bank` (0 or 1).
-uint8_t mos_cache_pool_units(uint8_t bank);
+uint16_t mos_cache_pool_units(uint8_t bank);
 uint16_t mos_cache_pool_base(uint8_t bank);
 /// Free units in a pool, and its longest run of free units.
-uint8_t mos_cache_free_units(uint8_t bank);
-uint8_t mos_cache_max_run(uint8_t bank);
+uint16_t mos_cache_free_units(uint8_t bank);
+uint16_t mos_cache_max_run(uint8_t bank);
 /// Which bank an object is in now (MOS_CACHE_INVALID_BANK for an invalid
 /// handle), and how many locks it holds. Any non-zero `bank` argument of the
 /// functions above means bank 1.

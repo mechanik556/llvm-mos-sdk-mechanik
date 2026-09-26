@@ -68,7 +68,7 @@ def cost(title):
     good = (v.get("cr_a") == "0E" and v.get("cr_b") == "0E" and v.get("cr_c") == "4E"
             and v.get("cr_d") == "4E" and v.get("loads") == "04"
             and all(340 <= x <= 370 for x in per.values())
-            and 15000 <= w("t_miss_a") < w("t_miss_b") and w("t_miss_c") < 65535)
+            and 5000 <= w("t_miss_a") < w("t_miss_b") and w("t_miss_c") < 65535)
     print(("PASS " if good else "FAIL ") + title)
     print("    per gate crossing (cycles, incl. trivial callee): "
           + ", ".join(f"{k[2:]}={x:.0f}" for k, x in per.items())

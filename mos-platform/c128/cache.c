@@ -26,12 +26,16 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MAX_UNITS 254 // per pool: a unit index is a byte and 255 is "none"
-#define BITMAP_BYTES ((MAX_UNITS + 7) / 8)
+// A unit index is 16 bits and NO_UNIT means "none". Bank 1's default pool is
+// about 44 KB, which is 1408 units of BANK1_SHIFT (32 bytes).
+typedef uint16_t unit_t;
+#define NO_UNIT 0xFFFF
+#define MAX_UNITS 1536      // in bank 1's pool
+#define MAX_BANK0_UNITS 254 // in bank 0's pool (its API takes bytes)
 #define NOBJ 32
 _Static_assert(NOBJ <= 32, "spill_one tracks objects in a 32-bit mask");
 #define BANK0_SHIFT 5         // bank 0's pool always uses 32-byte units
-#define DEFAULT_BANK1_SHIFT 7 // smallest default unit: 128 bytes
+#define DEFAULT_BANK1_SHIFT 5 // and so does bank 1's default pool
 #define MAX_BANK1_SHIFT 10
 #define BANK1_LOW 0x1000L  // first bank-1 address that is not Common RAM
 #define BANK1_HIGH 0xC000L // where KERNAL ROM and I/O begin
@@ -65,9 +69,11 @@ __attribute__((weak)) const uint16_t __mos_mt_reloc[1];
 
 // ---- Pools ------------------------------------------------------------------
 static uint16_t pool_base[2];
-static uint8_t pool_units[2];
+static unit_t pool_units[2];
 static uint8_t pool_shift[2] = {BANK0_SHIFT, DEFAULT_BANK1_SHIFT};
-static uint8_t bitmap[2][BITMAP_BYTES];
+static uint8_t bitmap0[(MAX_BANK0_UNITS + 7) / 8];
+static uint8_t bitmap1[(MAX_UNITS + 7) / 8];
+static uint8_t *const bitmap[2] = {bitmap0, bitmap1};
 static uint8_t bank1_ready;
 static uint8_t shared; // bank 0's pool is a block of the malloc heap
 static uint16_t stamp_clock;
@@ -79,54 +85,62 @@ static uint8_t older(uint16_t a, uint16_t b) { return (int16_t)(a - b) < 0; }
 
 struct mos_cache_stats mos_cache_stats;
 
-static uint8_t bit_used(uint8_t bank, uint8_t u) {
+static uint8_t bit_used(uint8_t bank, unit_t u) {
   return bitmap[bank][u >> 3] & (1 << (u & 7));
 }
 
-// Units needed for `size` bytes in `bank`; 255 if it cannot fit any pool.
-static uint8_t units_of(uint8_t bank, uint16_t size) {
+// Units needed for `size` bytes in `bank`; NO_UNIT if it cannot fit any pool.
+static unit_t units_of(uint8_t bank, uint16_t size) {
   uint16_t unit = (uint16_t)1 << pool_shift[bank];
   uint16_t units = (size >> pool_shift[bank]) + ((size & (unit - 1)) != 0);
-  return units > MAX_UNITS ? 255 : (uint8_t)units;
+  return units > MAX_UNITS ? NO_UNIT : units;
 }
 
-static uint16_t unit_addr(uint8_t bank, uint8_t idx) {
-  return pool_base[bank] + ((uint16_t)idx << pool_shift[bank]);
+static uint16_t unit_addr(uint8_t bank, unit_t idx) {
+  return pool_base[bank] + (idx << pool_shift[bank]);
 }
 
-static uint8_t unit_of(uint8_t bank, uint16_t addr) {
-  return (uint8_t)((addr - pool_base[bank]) >> pool_shift[bank]);
+static unit_t unit_of(uint8_t bank, uint16_t addr) {
+  return (addr - pool_base[bank]) >> pool_shift[bank];
 }
+
+// The bitmap is scanned a byte at a time where it can be: a byte of 8 used
+// units (0xFF) is skipped at once, which matters for a pool of over a thousand
+// units on a 6502.
 
 // First-fit run of `units` free units in `bank`'s pool; returns unit index or
-// 0xFF.
-static uint8_t alloc(uint8_t bank, uint8_t units) {
-  uint8_t n = pool_units[bank], run = 0, u;
-  if (units == 255)
-    return 0xFF;
-  for (u = 0; u < n; u++) {
-    if (bit_used(bank, u)) {
+// NO_UNIT.
+static unit_t alloc(uint8_t bank, unit_t units) {
+  unit_t n = pool_units[bank], run = 0, u = 0;
+  if (units == NO_UNIT)
+    return NO_UNIT;
+  while (u < n) {
+    if (!(u & 7) && bitmap[bank][u >> 3] == 0xFF) {
       run = 0;
+      u += 8;
       continue;
     }
-    if (++run == units) {
-      uint8_t start = u + 1 - units, k;
+    if (bit_used(bank, u)) {
+      run = 0;
+    } else if (++run == units) {
+      unit_t start = u + 1 - units, k;
       for (k = start; k <= u; k++)
         bitmap[bank][k >> 3] |= 1 << (k & 7);
       return start;
     }
+    u++;
   }
-  return 0xFF;
+  return NO_UNIT;
 }
 
-static void mark(uint8_t bank, uint8_t start, uint8_t units) {
-  uint8_t k;
+static void mark(uint8_t bank, unit_t start, unit_t units) {
+  unit_t k;
   for (k = start; k < start + units; k++)
     bitmap[bank][k >> 3] |= 1 << (k & 7);
 }
 
-static void release(uint8_t bank, uint8_t start, uint8_t units) {
-  uint8_t k;
+static void release(uint8_t bank, unit_t start, unit_t units) {
+  unit_t k;
   for (k = start; k < start + units; k++)
     bitmap[bank][k >> 3] &= ~(1 << (k & 7));
 }
@@ -194,12 +208,12 @@ static void ensure_bank1(void) {
       break;
   }
   pool_base[1] = start;
-  pool_units[1] = units > MAX_UNITS ? MAX_UNITS : (uint8_t)units;
+  pool_units[1] = units > MAX_UNITS ? MAX_UNITS : units;
   pool_shift[1] = shift;
   bank1_ready = 1;
 }
 
-uint8_t mos_cache_bank1(uint16_t base, uint8_t units, uint8_t unit_shift) {
+uint8_t mos_cache_bank1(uint16_t base, uint16_t units, uint8_t unit_shift) {
   uint32_t end = (uint32_t)base + ((uint32_t)units << unit_shift);
   if (unit_shift < 5 || unit_shift > MAX_BANK1_SHIFT || units > MAX_UNITS ||
       bank1_ready)
@@ -216,7 +230,7 @@ uint8_t mos_cache_bank1(uint16_t base, uint8_t units, uint8_t unit_shift) {
 }
 
 uint8_t mos_cache_static(void *pool, uint8_t units) {
-  if (!pool || !units || units > MAX_UNITS || pool_base[0])
+  if (!pool || !units || units > MAX_BANK0_UNITS || pool_base[0])
     return MOS_CACHE_BAD_ARGUMENT;
   pool_base[0] = (uint16_t)pool;
   pool_units[0] = units;
@@ -259,7 +273,8 @@ __attribute__((weak)) void mos_cache_on_evict(uint8_t id) { (void)id; }
 
 uint8_t mos_cache_module_evict(uint8_t id) {
   uint16_t addr, size;
-  uint8_t bank, units;
+  uint8_t bank;
+  unit_t units;
   if (id >= NMODS)
     return MOS_CACHE_NO_SUCH_MODULE;
   addr = __mos_mt_addr[id];
@@ -340,7 +355,8 @@ static void poll_point(void);
 static uint8_t spill_one(uint8_t bank) {
   uint32_t tried = 0;
   for (;;) {
-    uint8_t h, best = 0xFF, units, idx;
+    uint8_t h, best = 0xFF;
+    unit_t units, idx;
     uint16_t dst;
     for (h = 0; h < NOBJ; h++) {
       if (!ho[h].used || ho[h].lock || ho[h].bank != bank ||
@@ -354,7 +370,7 @@ static uint8_t spill_one(uint8_t bank) {
     tried |= (uint32_t)1 << best;
     units = units_of(!bank, ho[best].size);
     idx = alloc(!bank, units);
-    if (idx == 0xFF)
+    if (idx == NO_UNIT)
       continue; // does not fit over there: try the next
     dst = unit_addr(!bank, idx);
     xcopy(!bank, dst, bank, ho[best].addr, ho[best].size);
@@ -366,39 +382,81 @@ static uint8_t spill_one(uint8_t bank) {
   }
 }
 
-uint8_t mos_cache_free_units(uint8_t bank) {
-  uint8_t u, n = 0;
+uint16_t mos_cache_free_units(uint8_t bank) {
+  unit_t u = 0, n = 0;
   bank = bank != 0;
   if (bank)
     ensure_bank1();
-  for (u = 0; u < pool_units[bank]; u++)
+  while (u < pool_units[bank]) {
+    uint8_t byte = bitmap[bank][u >> 3];
+    if (!(u & 7) && u + 8 <= pool_units[bank] && (byte == 0xFF || !byte)) {
+      if (!byte)
+        n += 8;
+      u += 8;
+      continue;
+    }
     if (!bit_used(bank, u))
       n++;
+    u++;
+  }
   return n;
 }
 
-// Longest run of free units.
-uint8_t mos_cache_max_run(uint8_t bank) {
-  uint8_t u, run = 0, best = 0;
-  bank = bank != 0;
-  if (bank)
-    ensure_bank1();
-  for (u = 0; u < pool_units[bank]; u++) {
-    if (bit_used(bank, u))
+// Longest run of clear bits in the first `n` bits of `bm`, scanning a byte at
+// a time where the byte is all clear or all set.
+static unit_t longest_clear_run(const uint8_t *bm, unit_t n) {
+  unit_t u = 0, run = 0, best = 0;
+  while (u < n) {
+    uint8_t byte = bm[u >> 3];
+    if (!(u & 7) && u + 8 <= n && (byte == 0xFF || !byte)) {
+      if (byte) {
+        run = 0;
+      } else {
+        run += 8;
+        if (run > best)
+          best = run;
+      }
+      u += 8;
+      continue;
+    }
+    if (byte & (1 << (u & 7)))
       run = 0;
     else if (++run > best)
       best = run;
+    u++;
   }
   return best;
+}
+
+// Longest run of free units.
+uint16_t mos_cache_max_run(uint8_t bank) {
+  bank = bank != 0;
+  if (bank)
+    ensure_bank1();
+  return longest_clear_run(bitmap[bank], pool_units[bank]);
 }
 
 // FEASIBILITY: the longest run of units in `bank` NOT held by a pinned item (an
 // active module or a locked object). Pinned items can never move or be evicted,
 // so no amount of spilling/eviction/defragmentation can produce a bigger
 // contiguous run than this.
-static uint8_t max_gap(uint8_t bank) {
-  uint8_t pin[BITMAP_BYTES], id, u, run = 0, best = 0, s, n;
-  memset(pin, 0, sizeof pin);
+static uint8_t any_pinned(uint8_t bank) {
+  uint8_t id;
+  for (id = 0; id < NMODS; id++)
+    if (MOD_RESIDENT(id) && __mos_mt_active[id] && MOD_IN_BANK1(id) == bank)
+      return 1;
+  for (id = 0; id < NOBJ; id++)
+    if (ho[id].used && ho[id].lock && ho[id].bank == bank)
+      return 1;
+  return 0;
+}
+
+static unit_t max_gap(uint8_t bank) {
+  uint8_t pin[(MAX_UNITS + 7) / 8], id;
+  unit_t s, n;
+  if (!any_pinned(bank)) // the common case: no need to build the pin map
+    return pool_units[bank];
+  memset(pin, 0, (pool_units[bank] + 7) / 8);
   for (id = 0; id < NMODS; id++) {
     if (!MOD_RESIDENT(id) || !__mos_mt_active[id] || MOD_IN_BANK1(id) != bank)
       continue;
@@ -413,13 +471,7 @@ static uint8_t max_gap(uint8_t bank) {
     for (n = 0; n < units_of(bank, ho[id].size); n++)
       pin[(s + n) >> 3] |= 1 << ((s + n) & 7);
   }
-  for (u = 0; u < pool_units[bank]; u++) {
-    if (pin[u >> 3] & (1 << (u & 7)))
-      run = 0;
-    else if (++run > best)
-      best = run;
-  }
-  return best;
+  return longest_clear_run(pin, pool_units[bank]);
 }
 
 // DEFRAGMENTATION of one bank's pool: slide every unpinned resident (module or
@@ -429,33 +481,35 @@ static uint8_t max_gap(uint8_t bank) {
 // objects are plain copies (their handles do not change). Returns the number of
 // items moved.
 static uint8_t defrag(uint8_t bank) {
-  uint8_t cursor = 0, moved = 0;
+  unit_t cursor = 0;
+  uint8_t moved = 0;
   for (;;) {
-    uint8_t id, bs = 0xFF, bkind = 0, bidx = 0, n, pinned;
+    uint8_t id, bkind = 0, bidx = 0, pinned;
+    unit_t bs = NO_UNIT, n;
     uint16_t oldaddr, newaddr;
     for (id = 0; id < NMODS; id++) {
-      uint8_t s;
+      unit_t s;
       if (!MOD_RESIDENT(id) || MOD_IN_BANK1(id) != bank)
         continue;
       s = unit_of(bank, __mos_mt_addr[id]);
-      if (s >= cursor && (bs == 0xFF || s < bs)) {
+      if (s >= cursor && (bs == NO_UNIT || s < bs)) {
         bs = s;
         bkind = 1;
         bidx = id;
       }
     }
     for (id = 0; id < NOBJ; id++) {
-      uint8_t s;
+      unit_t s;
       if (!ho[id].used || ho[id].bank != bank)
         continue;
       s = unit_of(bank, ho[id].addr);
-      if (s >= cursor && (bs == 0xFF || s < bs)) {
+      if (s >= cursor && (bs == NO_UNIT || s < bs)) {
         bs = s;
         bkind = 2;
         bidx = id;
       }
     }
-    if (bs == 0xFF)
+    if (bs == NO_UNIT)
       break;
     if (bkind == 1) {
       n = units_of(bank, __mos_mt_size[bidx]);
@@ -492,9 +546,9 @@ static uint8_t defrag(uint8_t bank) {
 
 // alloc, and if the bank has enough free units in total but no contiguous run,
 // defragment it first.
-static uint8_t alloc_defrag(uint8_t bank, uint8_t units) {
-  uint8_t idx = alloc(bank, units);
-  if (idx != 0xFF)
+static unit_t alloc_defrag(uint8_t bank, unit_t units) {
+  unit_t idx = alloc(bank, units);
+  if (idx != NO_UNIT)
     return idx;
   if (mos_cache_free_units(bank) >= units && defrag(bank))
     idx = alloc(bank, units);
@@ -513,9 +567,10 @@ static uint8_t sh_want; // bank 0 was too small for a request (shared mode)
 // held by pinned items in every allowed bank is refused up front, with no
 // spills, evictions or moves. Returns the unit index (or 0xFF) and sets
 // *bank_out. `only` = 0xFF means either bank, else that bank only.
-static uint8_t place(uint8_t first, uint8_t only, uint16_t size,
-                     uint8_t *bank_out) {
-  uint8_t k, bank = 0, idx = 0xFF, ok[2], units[2];
+static unit_t place(uint8_t first, uint8_t only, uint16_t size,
+                    uint8_t *bank_out) {
+  uint8_t k, bank = 0, ok[2];
+  unit_t idx = NO_UNIT, units[2];
   ensure_bank1();
   for (k = 0; k < 2; k++) {
     units[k] = units_of(k, size);
@@ -525,28 +580,28 @@ static uint8_t place(uint8_t first, uint8_t only, uint16_t size,
   *bank_out = 0;
   if (!ok[0] && !ok[1]) {
     mos_cache_stats.place_refused++;
-    return 0xFF;
+    return NO_UNIT;
   }
-  for (k = 0; k < 2 && idx == 0xFF; k++) { // pass 0
+  for (k = 0; k < 2 && idx == NO_UNIT; k++) { // pass 0
     bank = k ? !first : first;
     if (ok[bank])
       idx = alloc(bank, units[bank]);
-    if (idx == 0xFF && bank == 0)
+    if (idx == NO_UNIT && bank == 0)
       sh_want = 1; // bank 0 was full: wants to grow (shared mode)
   }
-  for (k = 0; k < 2 && idx == 0xFF; k++) { // pass 1: defragment
+  for (k = 0; k < 2 && idx == NO_UNIT; k++) { // pass 1: defragment
     bank = k ? !first : first;
     if (ok[bank])
       idx = alloc_defrag(bank, units[bank]);
   }
-  for (k = 0; k < 2 && idx == 0xFF; k++) { // pass 2: spill / evict
+  for (k = 0; k < 2 && idx == NO_UNIT; k++) { // pass 2: spill / evict
     bank = k ? !first : first;
     if (!ok[bank])
       continue;
     for (;;) {
       uint8_t victim;
       idx = alloc_defrag(bank, units[bank]);
-      if (idx != 0xFF)
+      if (idx != NO_UNIT)
         break;
       if (spill_one(bank))
         continue; // lossless: move an object across
@@ -562,7 +617,8 @@ static uint8_t place(uint8_t first, uint8_t only, uint16_t size,
 
 uint8_t mos_cache_module_load(uint8_t id, uint8_t caller_bank) {
   uint16_t size;
-  uint8_t bank = 0, idx;
+  uint8_t bank = 0;
+  unit_t idx;
   if (id >= NMODS)
     return MOS_CACHE_NO_SUCH_MODULE;
   if (!__mos_mt_img[id])
@@ -571,7 +627,7 @@ uint8_t mos_cache_module_load(uint8_t id, uint8_t caller_bank) {
     return MOS_CACHE_OK;
   size = __mos_mt_size[id];
   idx = place(caller_bank ? 1 : 0, 0xFF, size, &bank);
-  if (idx == 0xFF)
+  if (idx == NO_UNIT)
     return MOS_CACHE_NO_ROOM;
   {
     uint16_t dest = unit_addr(bank, idx);
@@ -590,14 +646,15 @@ uint8_t mos_cache_module_load(uint8_t id, uint8_t caller_bank) {
 }
 
 mos_cache_handle_t mos_cache_malloc(uint16_t size) {
-  uint8_t h, bank = 0, idx;
+  uint8_t h, bank = 0;
+  unit_t idx;
   poll_point();
   for (h = 0; h < NOBJ && ho[h].used; h++) {
   }
   if (h == NOBJ || !size)
     return 0;
   idx = place(0, 0xFF, size, &bank);
-  if (idx == 0xFF)
+  if (idx == NO_UNIT)
     return 0;
   ho[h].addr = unit_addr(bank, idx);
   ho[h].size = size;
@@ -627,7 +684,8 @@ uint8_t mos_cache_free(mos_cache_handle_t handle) {
 // switch is held across caller code. A lock held by one bank's code pins the
 // object there, so the other bank's lock attempt fails (NULL).
 void *mos_cache_lock_in(mos_cache_handle_t handle, uint8_t caller_bank) {
-  uint8_t units, idx, nb = 0;
+  uint8_t nb = 0;
+  unit_t units, idx;
   uint16_t dst;
   caller_bank = caller_bank != 0;
   poll_point();
@@ -638,7 +696,7 @@ void *mos_cache_lock_in(mos_cache_handle_t handle, uint8_t caller_bank) {
     if (ho[handle - 1].lock)
       return 0;
     idx = place(caller_bank, caller_bank, ho[handle - 1].size, &nb);
-    if (idx == 0xFF)
+    if (idx == NO_UNIT)
       return 0;
     dst = unit_addr(caller_bank, idx);
     xcopy(caller_bank, dst, from, ho[handle - 1].addr, ho[handle - 1].size);
@@ -668,7 +726,7 @@ uint8_t mos_cache_defrag(void) {
   return defrag(0) + defrag(1);
 }
 
-uint8_t mos_cache_pool_units(uint8_t bank) {
+uint16_t mos_cache_pool_units(uint8_t bank) {
   bank = bank != 0;
   if (bank)
     ensure_bank1();
@@ -725,8 +783,8 @@ static uint8_t pool0_pinned(void) {
   return 0;
 }
 
-static uint8_t used_top(void) { // highest used unit of bank 0, plus one
-  uint8_t u = pool_units[0];
+static unit_t used_top(void) { // highest used unit of bank 0, plus one
+  unit_t u = pool_units[0];
   while (u && !bit_used(0, u - 1))
     u--;
   return u;
@@ -736,7 +794,7 @@ static uint8_t used_top(void) { // highest used unit of bank 0, plus one
 // have done so without freeing any unit is ignored, so that a faulty one
 // cannot make the caller loop forever.
 static uint8_t demoted(void) {
-  uint8_t before = mos_cache_free_units(0);
+  unit_t before = mos_cache_free_units(0);
   return mos_cache_tier_demote(0) && mos_cache_free_units(0) > before;
 }
 
@@ -746,8 +804,8 @@ static uint8_t pool0_yield(uint8_t want) {
   uint8_t given = 0;
   sh_busy = 1;
   while (given < want && pool_units[0] > sh_min) {
-    uint8_t top = used_top(), lowest = top > sh_min ? top : sh_min, room, n,
-            victim;
+    unit_t top = used_top(), lowest = top > sh_min ? top : sh_min, room;
+    uint8_t n, victim;
     room = pool_units[0] - lowest;
     if (!room &&
         mos_cache_free_units(0)) { // free units exist, but not at the end
@@ -769,7 +827,7 @@ static uint8_t pool0_yield(uint8_t want) {
     }
     n = (uint8_t)(want - given);
     if (n > room)
-      n = room;
+      n = (uint8_t)room;
     // Shrinking never moves the block.
     if (realloc((void *)pool_base[0], (uint16_t)(pool_units[0] - n)
                                           << BANK0_SHIFT) !=
@@ -788,7 +846,8 @@ static uint8_t pool0_yield(uint8_t want) {
 // move, every resident module in it is relocated by the move delta and every
 // object's address adjusted (handles do not change).
 static uint8_t pool0_grow(uint8_t add) {
-  uint8_t cur = pool_units[0], id;
+  unit_t cur = pool_units[0];
+  uint8_t id;
   uint8_t *np;
   uint16_t old = pool_base[0], delta;
   if (!add || (uint16_t)cur + add > sh_max || pool0_pinned())
@@ -821,7 +880,7 @@ uint8_t mos_cache_shared(uint8_t min_units, uint8_t init_units,
                          uint8_t max_units, uint16_t low, uint16_t high) {
   uint8_t *p;
   if (pool_base[0] || !min_units || min_units > init_units ||
-      init_units > max_units || max_units > MAX_UNITS || low >= high)
+      init_units > max_units || max_units > MAX_BANK0_UNITS || low >= high)
     return MOS_CACHE_BAD_ARGUMENT;
   sh_busy = 1;
   p = malloc((uint16_t)init_units << BANK0_SHIFT);
