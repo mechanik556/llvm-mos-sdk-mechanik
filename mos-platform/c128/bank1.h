@@ -90,10 +90,11 @@
 //   the full list and what is NOT usable). The area must be inside
 //   $0000-$0FFF.
 //
-// * C128 BASIC 7 keeps its variables in bank 1 (from $0400 up). Bank-1 memory
-//   that a program writes may therefore be memory BASIC's variables occupy: a
-//   program started from BASIC and then returning to it must not expect that
-//   BASIC's variables survive.
+// * C128 BASIC 7 keeps its variables in bank 1: the variable table starts at
+//   $0400 and grows up, and strings are at the top of bank 1, growing down
+//   (checked under VICE). Bank-1 memory that a program writes may therefore be
+//   memory BASIC's variables occupy: a program started from BASIC and then
+//   returning to it must not expect that BASIC's variables survive.
 //
 // * Initialized and zero-initialized bank-1 data are populated at program
 //   startup (bank1-load.c). Bank-1 memory is bank1's $1000-$BFFF.
@@ -123,8 +124,10 @@
 // $0800 area is available without configuration, for code (the program's own
 // Common-RAM code goes in a section named .c128commoncode.*). To use $0B00,
 // $0C00 or $0E00, move the code area there with the --defsym above, or add a
-// linker region of your own. The figures for $0B00-$0FFF come from the C128
-// documentation, not from a test that fills them.
+// linker region of your own. test/c128/common-ram-free.c checks under VICE
+// that the KERNAL console (screen scrolling, IRQs, bank-1 calls) leaves
+// $0B00-$0FFF alone. Tape, RS-232, sprites and disk I/O, the documented users
+// of those areas, are not exercised.
 
 #ifndef _C128_BANK1_H
 #define _C128_BANK1_H

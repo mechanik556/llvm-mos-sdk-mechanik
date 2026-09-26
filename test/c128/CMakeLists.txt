@@ -46,6 +46,9 @@ add_vice_test(malloc-hook SOURCE ../commodore/malloc-hook.c)
 add_vice_test(cxx-new-delete SOURCE ../commodore/cxx-new-delete.cc)
 add_vice_test(bank1-large-data)
 add_vice_test(common-code-area)
+# The Common-RAM areas bank1.h lists as free ($0B00-$0FFF) stay untouched by
+# the KERNAL console.
+add_vice_test(common-ram-free)
 
 # Exit path in a program that is large (exit() above $4000): finishes and
 # reports, and hands control back to BASIC.

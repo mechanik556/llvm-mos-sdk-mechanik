@@ -45,9 +45,10 @@
 // Bank 1's pool is by default the space above statically placed bank-1 content
 // (__c128bank1_free_start/_end, link.ld), managed here; mos_cache_bank1
 // chooses another region. Bank-1 memory managed here must not also be handed to
-// anything else. C128 BASIC 7 keeps its variables in bank 1 (from $0400 up), so
-// a program that writes bank 1 and then returns to BASIC must not expect the
-// BASIC variables of the program that started it to survive.
+// anything else. C128 BASIC 7 keeps its variables in bank 1 (from $0400 up; its
+// strings are at the top), so a program that writes bank 1 and then returns to
+// BASIC must not expect the BASIC variables of the program that started it to
+// survive.
 //
 // What using any of this costs. The runtime moves data to and from bank 1
 // through the bank-1 support of bank1.h, so a program that calls it links that
