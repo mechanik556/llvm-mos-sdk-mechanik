@@ -35,6 +35,7 @@ add_platform_library(c128-c
   bank1.s
   bank1-load.c
   cache.c
+  cache-nomodules.c
   cache-gate.s
   cache-host.c
   cache-host.s

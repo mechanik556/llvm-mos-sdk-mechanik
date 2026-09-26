@@ -69,17 +69,30 @@ void __c128bank1_restore_common_code(void) {
 static char
     __attribute__((section(".zp.bss"))) __c128bank1_scratch[C128BANK1_CHUNK];
 
-// Copy size bytes from bank-0-visible lma into bank-1 RAM at vma, staged
-// through the Common-RAM scratch buffer.
-static void c128bank1_copy_region(char *vma, const char *lma,
-                                  unsigned short size) {
+// Transfers between banks, a chunk at a time through the Common-RAM scratch
+// buffer, in one routine to keep the code small: a write copies bank-0-visible
+// memory into bank 1, a read the other way, and a move copies within bank 1.
+// The copy loop is symmetric: with bank 1 mapped, the scratch buffer is Common
+// RAM, and addresses on the bank-1 side are read or written in bank 1. A move
+// copies forward, so it is only safe downward (destination below source).
+enum { XFER_WRITE, XFER_READ, XFER_MOVE };
+
+static __attribute__((noinline)) void
+xfer(unsigned char mode, char *dst, const char *src, unsigned short size) {
   while (size) {
     unsigned char chunk =
         size > C128BANK1_CHUNK ? C128BANK1_CHUNK : (unsigned char)size;
-    memcpy(__c128bank1_scratch, lma, chunk);
-    __c128bank1_copy_chunk(vma, __c128bank1_scratch, chunk);
-    vma += chunk;
-    lma += chunk;
+    if (mode == XFER_WRITE) {
+      memcpy(__c128bank1_scratch, src, chunk);
+    } else {
+      __c128bank1_copy_chunk(__c128bank1_scratch, src, chunk);
+      if (mode == XFER_READ)
+        memcpy(dst, __c128bank1_scratch, chunk);
+    }
+    if (mode != XFER_READ)
+      __c128bank1_copy_chunk(dst, __c128bank1_scratch, chunk);
+    dst += chunk;
+    src += chunk;
     size -= chunk;
   }
 }
@@ -107,37 +120,31 @@ static void c128bank1_zero_region(char *vma, unsigned short size) {
 // (after .init.200's ordinary .data/.bss init, after .init.011's
 // Common-RAM bump).
 void __c128bank1_load(void) {
-  c128bank1_copy_region(__c128bank1_text_vma_start, __c128bank1_text_lma_start,
-                        (unsigned short)&__c128bank1_text_size);
-  c128bank1_copy_region(__c128bank1_data_vma_start, __c128bank1_data_lma_start,
-                        (unsigned short)&__c128bank1_data_size);
+  xfer(XFER_WRITE, __c128bank1_text_vma_start, __c128bank1_text_lma_start,
+       (unsigned short)&__c128bank1_text_size);
+  xfer(XFER_WRITE, __c128bank1_data_vma_start, __c128bank1_data_lma_start,
+       (unsigned short)&__c128bank1_data_size);
   c128bank1_zero_region(__c128bank1_bss_vma_start,
                         (unsigned short)&__c128bank1_bss_size);
 }
 
 // Run-time copies between bank 0 and bank 1 (declared in bank1.h and
-// cache-internal.h), staged through
-// the same Common-RAM scratch buffer (so using them costs no zero page beyond
-// the 16 bytes bank-1 placement already costs). The bank-1 side is an address,
-// not a pointer: see bank1.h.
+// cache-internal.h), staged through the same Common-RAM scratch buffer (so
+// using them costs no zero page beyond the 16 bytes bank-1 placement already
+// costs). The bank-1 side is an address, not a pointer: see bank1.h.
 void c128_bank1_write(unsigned short bank1_dest, const void *src,
                       unsigned short size) {
-  c128bank1_copy_region((char *)bank1_dest, (const char *)src, size);
+  xfer(XFER_WRITE, (char *)bank1_dest, (const char *)src, size);
 }
 
 void c128_bank1_read(void *dest, unsigned short bank1_src,
                      unsigned short size) {
-  char *d = (char *)dest;
-  const char *s = (const char *)bank1_src;
-  while (size) {
-    unsigned char chunk =
-        size > C128BANK1_CHUNK ? C128BANK1_CHUNK : (unsigned char)size;
-    // The copy loop is symmetric: with bank 1 mapped, the scratch buffer is
-    // Common RAM and the source address is read from bank 1.
-    __c128bank1_copy_chunk(__c128bank1_scratch, s, chunk);
-    memcpy(d, __c128bank1_scratch, chunk);
-    d += chunk;
-    s += chunk;
-    size -= chunk;
-  }
+  xfer(XFER_READ, (char *)dest, (const char *)bank1_src, size);
+}
+
+// Move size bytes within bank 1, downward (bank1_dst <= bank1_src). Private to
+// the cache runtime (cache-internal.h).
+void __c128bank1_move(unsigned short bank1_dst, unsigned short bank1_src,
+                      unsigned short size) {
+  xfer(XFER_MOVE, (char *)bank1_dst, (const char *)bank1_src, size);
 }

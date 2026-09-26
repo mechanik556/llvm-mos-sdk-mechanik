@@ -18,6 +18,10 @@ void c128_bank1_write(unsigned short bank1_dest, const void *src,
                       unsigned short size);
 void c128_bank1_read(void *dest, unsigned short bank1_src, unsigned short size);
 
+// Move within bank 1, downward (bank1_dst <= bank1_src) (bank1-load.c).
+void __c128bank1_move(unsigned short bank1_dst, unsigned short bank1_src,
+                      unsigned short size);
+
 // Entry points behind the host jump table (cache-host.s), reached through the
 // call gate.
 uint8_t __mos_host_evict(uint8_t id);
