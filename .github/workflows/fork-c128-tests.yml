@@ -91,6 +91,16 @@ jobs:
           cd build
           CTEST_OUTPUT_ON_FAILURE=1 ninja test-c64
 
+      # The desktop-VICE tests are silently absent when VICE_DIR is unset or
+      # VICE is missing, so a green test step alone does not show they ran.
+      # These tests have no libretro variant; --no-tests=error fails the step if
+      # none of them is registered, and they must pass.
+      - name: Check that the desktop-VICE tests ran.
+        run: |
+          cd build/test/c128/build
+          ctest -N | tee ctest-list.txt
+          ctest --no-tests=error -R '^test-(basic-return|basic-return-large|common-ram-free|bank1-rcr|cache-modules)$' --output-on-failure
+
       - name: Upload test screenshots.
         if: always()
         uses: actions/upload-artifact@v4
