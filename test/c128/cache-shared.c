@@ -30,7 +30,7 @@ size_t __heap_bytes_free(void);
 
 static void *blk[48];
 static unsigned char nblk;
-static mos_handle_t o1, o2, g[16];
+static mos_handle_t o1, g[16];
 
 static int fill(mos_handle_t h, unsigned n, unsigned char seed) {
   unsigned char *p = mos_handle_lock(h);
@@ -100,7 +100,9 @@ int main(void) {
 
   /* a small bank-1 pool (10 units of 32 bytes) so that it can be exhausted */
   CHECK(mos_cache_bank1((uint16_t)__c128bank1_free_start, 10, 5) == 0);
-  CHECK(mos_cache_shared(0, INIT, MAX, LOW, HIGH) == 1); /* bad arguments */
+  CHECK(mos_cache_shared(0, INIT, MAX, LOW, HIGH) == 1);    /* bad arguments */
+  CHECK(mos_cache_shared(MIN, INIT, MAX, HIGH, HIGH) == 1); /* low >= high */
+  CHECK(mos_cache_shared(MIN, INIT, MAX, HIGH, LOW) == 1);
   CHECK(mos_cache_shared(MIN, INIT, MAX, LOW, HIGH) == 0);
   CHECK(mos_cache_shared(MIN, INIT, MAX, LOW, HIGH) == 1); /* only once */
   cost_init = F0 - __heap_bytes_free(); /* the pool block's cost */

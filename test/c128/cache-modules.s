@@ -164,7 +164,7 @@ __mos_mt_stamp:  .fill 12
 ; C-callable stubs (arguments and results in A).
 	.section .text.stubs,"ax",@progbits
 .globl m_add1, m_cb, m_add7, m_r_entry, m_r_viaptr, m_r_lohi, m_r_call_sm, m_r_sm_to_b
-.globl m_r_try_evict, m_g_incr
+.globl m_r_try_evict, m_g_incr, m_no_such_module
 m_add1:
 	CALL 0, fa_add1 - modA_start
 	rts
@@ -192,6 +192,12 @@ m_r_sm_to_b:
 m_r_try_evict:
 	CALL 2, r_try_evict - modR_start
 	rts
+m_no_such_module:                ; the gate reports failure: carry set, A = 3
+	CALL 99, 0
+	bcs 1f
+	lda #0
+	rts
+1:	rts
 m_g_incr:                        ; A = handle; returns 0, or 1 if the lock was refused
 	CALL 4, g_incr - modG_start
 	bcs 1f

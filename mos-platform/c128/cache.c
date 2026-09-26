@@ -4,8 +4,9 @@
 // information.
 
 // Bank-aware object heap and code-module cache; see cache.h for the model and
-// the API. This file is the runtime; cache-gate.s/cache-gate.c are the call
-// gate that dispatches into modules.
+// the API. This file is the runtime; cache-gate.s is the call gate that
+// dispatches into modules, and cache-host.{c,s} the services module code can
+// call back into.
 //
 // Two pools, one per RAM bank, each a run of equal-sized units tracked by a
 // bitmap. Objects and modules are placed in units; an unlocked object or an
@@ -20,21 +21,18 @@
 // whatever value is currently there and writes the image back. Paired lo/hi
 // fixups are combined into one 16-bit operation.
 
-#include "cache.h"
+#include "cache-internal.h"
 
 #include <stdlib.h>
 #include <string.h>
 
-// From bank1.h, which cannot be included when the platform library is built.
-void c128_bank1_write(unsigned short bank1_dest, const void *src,
-                      unsigned short size);
-void c128_bank1_read(void *dest, unsigned short bank1_src, unsigned short size);
-
 #define MAX_UNITS 254 // per pool: a unit index is a byte and 255 is "none"
 #define BITMAP_BYTES ((MAX_UNITS + 7) / 8)
 #define NOBJ 32
-#define BANK0_SHIFT 5 // bank 0's pool always uses 32-byte units
-#define DEFAULT_BANK1_SHIFT 7
+_Static_assert(NOBJ <= 32, "spill_one tracks objects in a 32-bit mask");
+#define BANK0_SHIFT 5         // bank 0's pool always uses 32-byte units
+#define DEFAULT_BANK1_SHIFT 7 // smallest default unit: 128 bytes
+#define MAX_BANK1_SHIFT 10
 
 // ---- Module table (supplied by the program; see cache.h) -------------------
 // Weak defaults describe "no modules", so a program without a module table
@@ -60,7 +58,7 @@ __attribute__((weak)) const uint16_t __mos_mt_size[1];
 __attribute__((weak)) const uint16_t __mos_mt_reloc[1];
 
 #define NMODS __mos_mt_count
-#define MOD_IN_BANK1(id) (__mos_mt_cr[id] == 0x4E)
+#define MOD_IN_BANK1(id) (__mos_mt_cr[id] == MOS_CACHE_CR_BANK1)
 #define MOD_RESIDENT(id) (__mos_mt_img[id] && (__mos_mt_addr[id] >> 8))
 
 // ---- Pools ------------------------------------------------------------------
@@ -71,6 +69,11 @@ static uint8_t bitmap[2][BITMAP_BYTES];
 static uint8_t bank1_ready;
 static uint8_t shared; // bank 0's pool is a block of the malloc heap
 static uint16_t stamp_clock;
+
+// Load and lock stamps are 16-bit counters that wrap; two stamps are compared
+// modulo 2^16, which orders them correctly as long as the items being compared
+// were stamped within 32767 events of each other.
+static uint8_t older(uint16_t a, uint16_t b) { return (int16_t)(a - b) < 0; }
 
 struct mos_cache_stats mos_cache_stats;
 
@@ -174,15 +177,20 @@ extern char __c128bank1_free_start[];
 extern char __c128bank1_free_end[];
 
 static void ensure_bank1(void) {
-  uint16_t start, end;
+  uint16_t start, end, units;
   uint8_t shift = DEFAULT_BANK1_SHIFT;
-  uint16_t units;
   if (bank1_ready)
     return;
-  start = ((uint16_t)__c128bank1_free_start + (((uint16_t)1 << shift) - 1)) &
-          ~(((uint16_t)1 << shift) - 1);
   end = (uint16_t)__c128bank1_free_end;
-  units = start < end ? (end - start) >> shift : 0;
+  // The smallest unit size (128..1024 bytes) with which the whole region fits
+  // in MAX_UNITS units.
+  for (;; shift++) {
+    uint16_t mask = ((uint16_t)1 << shift) - 1;
+    start = ((uint16_t)__c128bank1_free_start + mask) & ~mask;
+    units = start < end ? (end - start) >> shift : 0;
+    if (units <= MAX_UNITS || shift == MAX_BANK1_SHIFT)
+      break;
+  }
   pool_base[1] = start;
   pool_units[1] = units > MAX_UNITS ? MAX_UNITS : (uint8_t)units;
   pool_shift[1] = shift;
@@ -190,7 +198,8 @@ static void ensure_bank1(void) {
 }
 
 uint8_t mos_cache_bank1(uint16_t base, uint8_t units, uint8_t unit_shift) {
-  if (unit_shift < 5 || unit_shift > 10 || units > MAX_UNITS || bank1_ready)
+  if (unit_shift < 5 || unit_shift > MAX_BANK1_SHIFT || units > MAX_UNITS ||
+      bank1_ready)
     return 1;
   pool_base[1] = base;
   pool_units[1] = units;
@@ -207,8 +216,7 @@ uint8_t mos_cache_static(void *pool, uint8_t units) {
   return 0;
 }
 
-// ---- Modules
-// ------------------------------------------------------------------
+// ---- Modules ----------------------------------------------------------------
 
 // Relocation table: repeated {1, off16} (FULL16) or {2, lo_off16, hi_off16}
 // (paired LOW8/HIGH8), terminated by 0. Offsets are from the module base.
@@ -241,10 +249,17 @@ static void apply_relocs(uint8_t bank, uint16_t base, uint16_t table,
 // nothing by default).
 __attribute__((weak)) void mos_cache_on_evict(uint8_t id) { (void)id; }
 
-// Returns 0 ok; 1 = pinned (active); 2 = not resident; 3 = static.
+// Returns 0 ok; 1 = pinned (active); 2 = not resident; 3 = static; 4 = no such
+// module.
 uint8_t mos_cache_module_evict(uint8_t id) {
-  uint16_t addr = __mos_mt_addr[id], size = __mos_mt_size[id];
-  uint8_t bank = MOD_IN_BANK1(id), units = units_of(bank, size);
+  uint16_t addr, size;
+  uint8_t bank, units;
+  if (id >= NMODS)
+    return 4;
+  addr = __mos_mt_addr[id];
+  size = __mos_mt_size[id];
+  bank = MOD_IN_BANK1(id);
+  units = units_of(bank, size);
   if (!__mos_mt_img[id])
     return 3;
   if (!(addr >> 8))
@@ -278,7 +293,7 @@ static uint8_t oldest(uint8_t bank, uint8_t cold_only) {
       continue;
     if (cold_only && __mos_mt_ref[id])
       continue;
-    if (best == 0xFF || __mos_mt_stamp[id] < __mos_mt_stamp[best])
+    if (best == 0xFF || older(__mos_mt_stamp[id], __mos_mt_stamp[best]))
       best = id;
   }
   return best;
@@ -296,8 +311,7 @@ static uint8_t find_victim(uint8_t bank) {
   return oldest(bank, 0);
 }
 
-// ---- Objects
-// ------------------------------------------------------------------
+// ---- Objects ----------------------------------------------------------------
 
 static struct {
   uint16_t addr, size, stamp;
@@ -322,7 +336,7 @@ static uint8_t spill_one(uint8_t bank) {
       if (!ho[h].used || ho[h].lock || ho[h].bank != bank ||
           (tried & ((uint32_t)1 << h)))
         continue;
-      if (best == 0xFF || ho[h].stamp < ho[best].stamp)
+      if (best == 0xFF || older(ho[h].stamp, ho[best].stamp))
         best = h;
     }
     if (best == 0xFF)
@@ -481,9 +495,8 @@ static uint8_t sh_want; // bank 0 was too small for a request (shared mode)
 //  0. free space in the preferred bank, then the other;
 //  1. defragment a bank that has enough free units in total;
 //  2. only then make room: spill an unlocked object to the other bank
-//  (lossless)
-//     or evict the oldest cold module, defragmenting whenever the freed total
-//     is enough, until it fits.
+//     (lossless) or evict the oldest cold module, defragmenting whenever the
+//     freed total is enough, until it fits.
 // A FEASIBILITY check runs first: a request larger than the longest run not
 // held by pinned items in every allowed bank is refused up front, with no
 // spills, evictions or moves. Returns the unit index (or 0xFF) and sets
@@ -535,10 +548,16 @@ static uint8_t place(uint8_t first, uint8_t only, uint16_t size,
   return idx;
 }
 
+// Returns 0 ok (or already resident); 1 = no room; 3 = no such module, or a
+// static one. (The codes are the call gate's: 2 is its "nesting too deep".)
 uint8_t mos_cache_module_load(uint8_t id, uint8_t caller_bank) {
-  uint16_t size = __mos_mt_size[id];
+  uint16_t size;
   uint8_t bank = 0, idx;
-  poll_point();
+  if (id >= NMODS || !__mos_mt_img[id])
+    return 3;
+  if (MOD_RESIDENT(id))
+    return 0;
+  size = __mos_mt_size[id];
   idx = place(caller_bank ? 1 : 0, 0xFF, size, &bank);
   if (idx == 0xFF)
     return 1;
@@ -551,7 +570,7 @@ uint8_t mos_cache_module_load(uint8_t id, uint8_t caller_bank) {
     apply_relocs(bank, dest, __mos_mt_reloc[id],
                  (uint16_t)(dest - __mos_mt_img[id]));
     __mos_mt_addr[id] = dest;
-    __mos_mt_cr[id] = bank ? 0x4E : 0x0E;
+    __mos_mt_cr[id] = bank ? MOS_CACHE_CR_BANK1 : MOS_CACHE_CR_BANK0;
   }
   __mos_mt_stamp[id] = ++stamp_clock;
   mos_cache_stats.mod_loads++;
@@ -646,22 +665,28 @@ uint16_t mos_cache_pool_base(uint8_t bank) {
     ensure_bank1();
   return pool_base[bank];
 }
-uint8_t mos_handle_bank(mos_handle_t handle) { return ho[handle - 1].bank; }
-uint8_t mos_handle_locks(mos_handle_t handle) { return ho[handle - 1].lock; }
+static uint8_t valid_handle(mos_handle_t handle) {
+  return handle && handle <= NOBJ && ho[handle - 1].used;
+}
+uint8_t mos_handle_bank(mos_handle_t handle) {
+  return valid_handle(handle) ? ho[handle - 1].bank : 0xFF;
+}
+uint8_t mos_handle_locks(mos_handle_t handle) {
+  return valid_handle(handle) ? ho[handle - 1].lock : 0;
+}
 
-// ---- Shared mode: bank 0's pool is a block of the ordinary malloc heap
-// -------
-//  Stage 1 (polling): mos_cache_service(), called at safe points, keeps the
-//    heap's free bytes between two watermarks - it gives pool tail back when
-//    the heap runs low and takes it again when there is plenty and the cache is
-//    short of bank-0 room.
-//  Stage 2 (reclaim): __malloc_low_memory, called by malloc itself when a
-//    request cannot be satisfied, makes the cache give back what is needed
-//    right now. It does NO I/O and calls no allocator entry other than
-//    realloc-shrink, which never allocates: it spills objects to bank 1, drops
-//    cold modules and shrinks the pool block in place. Whatever is not cheap to
-//    give up in that way (disk demotion of dirty items) is done at the polling
-//    safe points, never here.
+// ---- Shared mode: bank 0's pool is a block of the ordinary malloc heap ------
+// The cache is the polite party; malloc knows nothing about it.
+//  Polling: mos_cache_service(), called at safe points, keeps the heap's free
+//    bytes between two watermarks - it gives pool tail back when the heap runs
+//    low and takes it again when there is plenty and the cache is short of
+//    bank-0 room.
+//  Reclaim: __malloc_low_memory, called by malloc itself when a request cannot
+//    be satisfied, makes the cache give back what is needed right now. It does
+//    NO I/O and calls no allocator entry other than realloc-shrink, which never
+//    allocates: it spills objects to bank 1, drops cold modules and shrinks the
+//    pool block in place. Whatever is not cheap to give up in that way (disk
+//    demotion of dirty items) is done at the polling safe points, never here.
 
 size_t __heap_bytes_free(void);
 
@@ -695,6 +720,14 @@ static uint8_t used_top(void) { // highest used unit of bank 0, plus one
   return u;
 }
 
+// Ask the tier extension point to free room in bank 0. A tier that claims to
+// have done so without freeing any unit is ignored, so that a faulty one
+// cannot make the caller loop forever.
+static uint8_t demoted(void) {
+  uint8_t before = mos_cache_free_units(0);
+  return mos_tier_demote(0) && mos_cache_free_units(0) > before;
+}
+
 // Give up to `want` units of bank 0's pool tail back to the heap; returns the
 // number given. Never goes below sh_min units.
 static uint8_t pool0_yield(uint8_t want) {
@@ -714,7 +747,7 @@ static uint8_t pool0_yield(uint8_t want) {
     if (!room) {        // make some: cheapest first
       if (spill_one(0)) // object -> bank 1 (lossless)
         continue;
-      if (mos_tier_demote(0)) // object -> REU (when it exists)
+      if (demoted()) // object -> REU (when it exists)
         continue;
       victim = find_victim(0); // clean module: just drop it
       if (victim == 0xFF)
@@ -776,7 +809,7 @@ uint8_t mos_cache_shared(uint8_t min_units, uint8_t init_units,
                          uint8_t max_units, uint16_t low, uint16_t high) {
   uint8_t *p;
   if (pool_base[0] || !min_units || min_units > init_units ||
-      init_units > max_units || max_units > MAX_UNITS)
+      init_units > max_units || max_units > MAX_UNITS || low >= high)
     return 1;
   sh_busy = 1;
   p = malloc((uint16_t)init_units << BANK0_SHIFT);
@@ -801,8 +834,8 @@ uint8_t mos_cache_service(void) {
     return 0;
   free = __heap_bytes_free();
   if (free < sh_low) {
-    size_t need = sh_low - free;
-    changed = pool0_yield((uint8_t)(need / 32 + 1)) != 0;
+    size_t units = (sh_low - free) / 32 + 1;
+    changed = pool0_yield(units > 255 ? 255 : (uint8_t)units) != 0;
   } else if (sh_want && free > sh_high) {
     size_t spare = (free - sh_high) / 32;
     uint8_t add = spare > 4 ? 4 : (uint8_t)spare; // a few units per call
@@ -816,9 +849,10 @@ uint8_t mos_cache_service(void) {
   return changed;
 }
 
-// Automatic polling: the safe points of the runtime (a module load, allocating
-// an object, locking one) call poll_point(), which runs mos_cache_service every
-// `every`th time. The gate's hit path is not a safe point and is unchanged. A
+// Automatic polling: the safe points of the runtime (allocating an object,
+// locking one) call poll_point(), which runs mos_cache_service every `every`th
+// time. Module loads are deliberately not safe points: they run inside the call
+// gate with interrupts disabled, where a tier's write-behind must not run. A
 // module's own code being active only pins the pool: growth is refused,
 // yielding is not.
 static uint8_t sh_every, sh_tick;
@@ -833,7 +867,7 @@ static void poll_point(void) {
   }
 }
 
-// Stage 2: malloc found nothing that fits `needed` bytes (chunk size). Yield
+// Reclaim: malloc found nothing that fits a chunk of `needed` bytes. Yield
 // enough of the pool to fit it, if possible; no I/O (see above).
 int __malloc_low_memory(size_t needed) {
   size_t units = needed / 32 + 1;

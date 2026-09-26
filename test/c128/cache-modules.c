@@ -17,7 +17,7 @@
 unsigned char m_add1(unsigned char), m_cb(unsigned char), m_add7(unsigned char),
     m_r_entry(unsigned char), m_r_viaptr(unsigned char),
     m_r_lohi(unsigned char), m_r_call_sm(void), m_r_sm_to_b(void),
-    m_r_try_evict(void), m_g_incr(unsigned char);
+    m_r_try_evict(void), m_g_incr(unsigned char), m_no_such_module(void);
 extern uint16_t __mos_mt_addr[];
 extern uint8_t __mos_mt_cr[];
 extern volatile uint8_t __mos_mt_active[];
@@ -77,6 +77,26 @@ int main(void) {
   mos_handle_unlock(h);
   CHECK(m_r_try_evict() == 1);
   CHECK(__mos_mt_addr[2] >> 8); /* R is still resident */
+
+  /* a module id the table does not have: the gate fails, calling nothing */
+  CHECK(m_no_such_module() == 3);
+  CHECK(mos_cache_module_load(99, 0) == 3);
+  CHECK(mos_cache_module_evict(99) == 4);
+  CHECK(mos_cache_module_evict(5) == 3);   /* the host is static */
+  CHECK(mos_cache_module_load(0, 0) == 0); /* already resident: nothing to do */
+  CHECK(mos_cache_module_load(5, 0) == 3);
+
+  /* module loads are not automatic-polling safe points: they run inside the
+   * gate with interrupts disabled */
+  {
+    unsigned char svc;
+    mos_cache_auto_poll(1);
+    svc = mos_cache_stats.services;
+    CHECK(mos_cache_module_evict(0) == 0);
+    CHECK(m_add1(1) == 2); /* loads A again */
+    CHECK(mos_cache_stats.services == svc);
+    mos_cache_auto_poll(0);
+  }
 
   /* defragmentation keeps modules working (they are relocated by the move) */
   (void)mos_defrag();

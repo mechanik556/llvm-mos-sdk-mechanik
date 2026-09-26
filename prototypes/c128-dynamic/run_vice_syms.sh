@@ -6,7 +6,7 @@
 # link map). Env: VICE_X128, WORK.
 set -e
 PRG="$(realpath "$1")"; MAP="$(realpath "$2")"; SYMS="$3"
-VICE_X128="${VICE_X128:-/c/C64/GTK3VICE-3.10-win64/bin/x128.exe}"
+VICE_X128="${VICE_X128:-x128}"
 WORK="${WORK:-/tmp/mos_test}"; mkdir -p "$WORK"; cd "$WORK"
 NAME=$(basename "$PRG" .prg)
 EXIT_HEX=$(grep -E "\(\.after_main\)" "$MAP" | head -1 | awk '{print $1}')

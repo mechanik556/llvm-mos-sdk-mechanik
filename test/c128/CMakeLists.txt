@@ -27,11 +27,12 @@ add_vice_test(bank1-rcr)
 add_vice_test(bank1-malloc)
 add_vice_test(bank1-static-data)
 add_vice_test(bank1-malloc-stress)
-add_vice_test(heap-growth)
-add_vice_test(realloc)
-add_vice_test(aligned-alloc)
-add_vice_test(malloc-hook)
-add_vice_test(cxx-new-delete SOURCE cxx-new-delete.cc)
+# Heap tests shared with the C64 (../commodore).
+add_vice_test(heap-growth SOURCE ../commodore/heap-growth.c)
+add_vice_test(realloc SOURCE ../commodore/realloc.c)
+add_vice_test(aligned-alloc SOURCE ../commodore/aligned-alloc.c)
+add_vice_test(malloc-hook SOURCE ../commodore/malloc-hook.c)
+add_vice_test(cxx-new-delete SOURCE ../commodore/cxx-new-delete.cc)
 add_vice_test(bank1-large-data)
 add_vice_test(common-code-area)
 
@@ -40,6 +41,13 @@ add_vice_test(common-code-area)
 add_vice_test(exit-large)
 add_vice_basic_return_test(basic-return)
 add_vice_basic_return_test(basic-return-large)
+
+# A program that does not use the cache runtime must not link any of it.
+foreach(t bank1-call heap-growth)
+  add_test(NAME cache-not-linked-${t}
+    COMMAND ${CMAKE_COMMAND} -DMAP=$<TARGET_FILE:${t}.prg>.map
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/check-not-linked.cmake)
+endforeach()
 
 add_subdirectory(compile)
 add_subdirectory(no-compile)

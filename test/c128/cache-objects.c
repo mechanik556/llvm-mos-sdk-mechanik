@@ -1,4 +1,3 @@
-#include <bank1.h>
 #include <cache.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -91,16 +90,27 @@ int main(void) {
   mos_handle_unlock(big);
   CHECK(mos_handle_locks(big) == 0);
 
-  /* invalid handles */
+  /* invalid handles are rejected everywhere, not just by free */
   CHECK(mos_cacheable_free(0) == 2);
+  CHECK(mos_cacheable_free(33) == 2);
   CHECK(mos_handle_lock(0) == NULL);
+  CHECK(mos_handle_lock(33) == NULL);
+  CHECK(mos_handle_bank(0) == 0xFF && mos_handle_bank(33) == 0xFF);
   CHECK(mos_cacheable_malloc(0) == 0);
+  mos_handle_unlock(0); /* ignored */
+  mos_handle_unlock(33);
+  CHECK(mos_handle_locks(0) == 0 && mos_handle_locks(33) == 0);
+
+  /* no module table: every module id is invalid */
+  CHECK(mos_cache_module_evict(0) == 4);
+  CHECK(mos_cache_module_load(0, 0) == 3);
 
   /* out of memory: fill both pools with 3-unit objects, then one more fails
    * cleanly (0), the objects are intact, and freeing one makes room again */
   for (i = 0; i < 5; i++)
     mos_cacheable_free(o[i]);
   mos_cacheable_free(big);
+  CHECK(mos_handle_bank(big) == 0xFF); /* a freed handle is invalid */
   for (n = 0; n < 64; n++) {
     g[n] = mos_cacheable_malloc(70);
     if (!g[n])

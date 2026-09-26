@@ -18,19 +18,18 @@
   } while (0)
 
 size_t __set_heap_limit(size_t limit);
-size_t __heap_bytes_free(void);
 extern char __c128bank1_free_start[];
 
 static unsigned demote_calls, wb_calls;
-static volatile unsigned char
-    in_malloc; /* set while the test is inside malloc */
-static unsigned wb_in_malloc;
+static unsigned char lie; /* mos_tier_demote claims success, frees nothing */
 static mos_handle_t g[8];
 static unsigned char ng;
 
 uint8_t mos_tier_demote(uint8_t bank) {
   unsigned char i;
   demote_calls++;
+  if (lie)
+    return 1;
   if (bank != 0)
     return 0;
   for (i = 0; i < ng; i++)
@@ -42,16 +41,11 @@ uint8_t mos_tier_demote(uint8_t bank) {
   return 0;
 }
 
-void mos_tier_writebehind(void) {
-  wb_calls++;
-  if (in_malloc)
-    wb_in_malloc++;
-}
+void mos_tier_writebehind(void) { wb_calls++; }
 
 int main(void) {
   void *blk[40];
-  unsigned char nblk = 0, i;
-  size_t free0;
+  unsigned char nblk = 0;
 
   __set_heap_limit(1000);
   free(malloc(1));
@@ -66,10 +60,9 @@ int main(void) {
   CHECK(ng == 5 && mos_handle_bank(g[4]) == 1); /* 4 in bank 0, 1 in bank 1 */
   ng = 4;
 
-  /* exhaust malloc: the hook cannot spill (bank 1 is full), so it asks the
-   * tier to demote; the double frees objects, the pool shrinks, malloc goes on
-   */
-  in_malloc = 1;
+  /* a faulty tier that claims to have freed room but has not must not make
+   * malloc loop: the claim is ignored, the pool stays, malloc fails */
+  lie = 1;
   for (;;) {
     void *p = malloc(60);
     if (!p)
@@ -78,23 +71,35 @@ int main(void) {
     if (nblk == 40)
       break;
   }
-  in_malloc = 0;
+  lie = 0;
+  CHECK(nblk < 40);
+  CHECK(demote_calls >= 1 && mos_cache_pool_units(0) == 4);
+
+  /* exhaust malloc: the hook cannot spill (bank 1 is full), so it asks the
+   * tier to demote; the double frees objects, the pool shrinks, malloc goes on
+   */
+  demote_calls = 0;
+  for (;;) {
+    void *p = malloc(60);
+    if (!p)
+      break;
+    blk[nblk++] = p;
+    if (nblk == 40)
+      break;
+  }
   CHECK(demote_calls >= 1);
   CHECK(mos_cache_stats.hook_calls >= 1);
-  CHECK(wb_calls == 0 &&
-        wb_in_malloc == 0); /* write-behind never ran in malloc */
+  CHECK(wb_calls == 0); /* write-behind never ran, in malloc or anywhere */
 
   /* polling runs write-behind, and only polling does */
   CHECK(mos_cache_pool_units(0) == 1); /* everything was given back */
   free(blk[--nblk]);
   free(blk[--nblk]);
-  free0 = __heap_bytes_free();
   (void)mos_cache_service();
   CHECK(wb_calls == 1);
   mos_cache_auto_poll(1);
   (void)mos_cacheable_free(mos_cacheable_malloc(20));
   CHECK(wb_calls >= 2);
   mos_cache_auto_poll(0);
-  (void)free0;
   return EXIT_SUCCESS;
 }

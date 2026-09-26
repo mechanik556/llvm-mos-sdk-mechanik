@@ -11,10 +11,11 @@ set(VICE_LIBRETRO_CORE ${LIBRETRO_VICE_X64SC_CORE})
 # reappears, $A000 and up): finishes and reports, and hands control back to
 # BASIC.
 add_vice_test(exit-large)
-add_vice_test(heap-growth)
-add_vice_test(realloc)
-add_vice_test(aligned-alloc)
-add_vice_test(malloc-hook)
-add_vice_test(cxx-new-delete SOURCE cxx-new-delete.cc)
+# Heap tests shared with the C128 (../commodore).
+add_vice_test(heap-growth SOURCE ../commodore/heap-growth.c)
+add_vice_test(realloc SOURCE ../commodore/realloc.c)
+add_vice_test(aligned-alloc SOURCE ../commodore/aligned-alloc.c)
+add_vice_test(malloc-hook SOURCE ../commodore/malloc-hook.c)
+add_vice_test(cxx-new-delete SOURCE ../commodore/cxx-new-delete.cc)
 add_vice_basic_return_test(basic-return)
 add_vice_basic_return_test(basic-return-large)

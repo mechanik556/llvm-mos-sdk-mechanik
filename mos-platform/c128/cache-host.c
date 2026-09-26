@@ -7,16 +7,14 @@
 // table in cache-host.s, reached through the call gate from module code in
 // either bank. The caller's bank is the CR value the gate saved on entry.
 
-#include "cache.h"
+#include "cache-internal.h"
 
-extern volatile uint8_t __mos_gate_cr;
 extern const char __mos_host_tab[];
 extern uint16_t __mos_mt_addr[];
 extern uint8_t __mos_mt_cr[];
-
 void mos_cache_set_host(uint8_t id) {
   __mos_mt_addr[id] = (uint16_t)__mos_host_tab;
-  __mos_mt_cr[id] = 0x0E;
+  __mos_mt_cr[id] = MOS_CACHE_CR_BANK0;
 }
 
 uint8_t __mos_host_evict(uint8_t id) { return mos_cache_module_evict(id); }

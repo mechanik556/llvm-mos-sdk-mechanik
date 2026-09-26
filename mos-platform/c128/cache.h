@@ -37,33 +37,53 @@
 //   between two watermarks, and this library's __malloc_low_memory hook makes
 //   the pool give back what a failing allocation needs (spill unlocked objects
 //   to bank 1, drop modules, defragment, shrink in place). Neither path does
-//   any KERNAL or disk I/O.
+//   any KERNAL or disk I/O. The library defines __malloc_low_memory itself
+//   (overriding the weak default in stdlib.h), so a program that links this
+//   runtime cannot also define its own hook; it can call the runtime's
+//   mos_cache_service instead.
 //
 // Bank 1's pool is by default the space above statically placed bank-1 content
 // (__c128bank1_free_start/_end, link.ld), managed here; mos_cache_bank1
 // chooses another region. Bank-1 memory managed here must not also be handed to
-// anything else.
+// anything else. C128 BASIC 7 keeps its variables in bank 1 (from $0400 up), so
+// a program that writes bank 1 and then returns to BASIC must not expect the
+// BASIC variables of the program that started it to survive.
 //
-// Zero page. Using bank 1 costs 16 bytes of the zero-page pool (bank1.h); the
-// call gate (linked only by programs that use __mos_call_gate) costs 13 more. The pool
-// is ~102 bytes shared with the compiler's own use (-mlto-zp=102 in the platform
-// configuration), and the compiler does not know about zero page that assembly
-// or library code takes. A program that uses the gate and lets the compiler use
-// all of it fails to link with "section '.zp.bss' will not fit in region 'zp'".
-// Tell the compiler to leave room when linking such a program:
+// What using any of this costs. The runtime moves data to and from bank 1
+// through the bank-1 support of bank1.h, so a program that calls it links that
+// support even if it never places anything in bank 1 itself: the Common-RAM
+// code area at $0800 (saved at startup and restored at exit, see bank1.h) and a
+// 16-byte staging buffer in zero page. Programs that do not use the runtime pay
+// nothing.
+//
+// Zero page. The call gate (linked only by programs that use it) costs 13 more
+// bytes. The zero-page pool is about 102 bytes shared with the compiler's own
+// use (-mlto-zp=102 in the platform configuration), and the compiler does not
+// know about zero page that assembly or library code takes. A program that uses
+// the gate and lets the compiler use all of it fails to link with "section
+// '.zp.bss' will not fit in region 'zp'". Tell the compiler to leave room when
+// linking such a program:
 //   -mreserve-zp=29     (16 for bank 1 + 13 for the gate; 16 without the gate)
+//
+// Limits. At most 32 objects live at once; each pool has at most 254 units; the
+// gate nests at most 16 module calls deep; the counters in mos_cache_stats are
+// 8 bits and wrap.
 //
 // Not thread-safe and not interrupt-safe: call from ordinary code, not from an
 // IRQ or NMI handler.
 //
-// Code modules (optional). A program that supplies a module table (see
-// "Module table ABI" below) lets the runtime load, relocate, evict and
-// defragment relocatable code modules in the same pools; cache-gate.s provides
-// the __mos_call_gate that dispatches into them. Without a table, none of that is
+// Code modules (optional). A program that supplies a module table (see "Module
+// table ABI" below) lets the runtime load, relocate, evict and defragment
+// relocatable code modules in the same pools; cache-gate.s provides the
+// __mos_call_gate that dispatches into them. Without a table, none of that is
 // linked.
 
 #ifndef _C128_CACHE_H
 #define _C128_CACHE_H
+
+#if !defined(__C128__)
+#error This module may only be used when compiling for the C128!
+#endif
 
 #include <stdint.h>
 
@@ -85,7 +105,7 @@ uint8_t mos_cache_static(void *pool, uint8_t units);
 /// start with, never fewer than `min_units` or more than `max_units` (at most
 /// 254), and mos_cache_service keeps the heap's free bytes at least `low`
 /// (yielding pool space if not) and, when it grows the pool, at least `high`
-/// afterwards. Use `low` < `high`. Only while bank 0's pool is unused.
+/// afterwards. Requires `low` < `high`. Only while bank 0's pool is unused.
 /// Returns 0, 1 for a bad argument or if a pool is already set up, 2 if malloc
 /// has no room for the initial block.
 uint8_t mos_cache_shared(uint8_t min_units, uint8_t init_units,
@@ -93,15 +113,18 @@ uint8_t mos_cache_shared(uint8_t min_units, uint8_t init_units,
 
 /// Choose bank 1's pool: `units` units of (1 << unit_shift) bytes at the bank-1
 /// address `base` (5 <= unit_shift <= 10; units at most 254). The default, used
-/// if this is not called, is all of bank 1 above statically placed content, in
-/// 128-byte units. Returns 0, or 1 for a bad argument.
+/// if this is not called, is all of bank 1 above statically placed content,
+/// with the smallest unit size (128 to 1024 bytes) that lets it fit in 254
+/// units. Returns 0, or 1 for a bad argument or if the pool was already chosen
+/// or used.
 uint8_t mos_cache_bank1(uint16_t base, uint8_t units, uint8_t unit_shift);
 
 // ---- Objects ----------------------------------------------------------------
 
 /// Allocate an object of `size` bytes, in bank 0 if there is room, else bank 1,
 /// making room by moving unlocked objects and dropping modules if it must.
-/// Returns 0 if it cannot be placed. The contents are not initialized.
+/// Returns 0 if it cannot be placed. The contents are not initialized. A safe
+/// point for automatic polling (mos_cache_auto_poll).
 mos_handle_t mos_cacheable_malloc(uint16_t size);
 
 /// Free an object. Returns 0, 1 if it is locked, 2 for an invalid handle.
@@ -109,10 +132,11 @@ uint8_t mos_cacheable_free(mos_handle_t handle);
 
 /// Make the object resident in bank 0 and return a pointer to it, valid until
 /// the matching mos_handle_unlock; locks nest. Returns NULL for an invalid
-/// handle or if there is no room to bring it into bank 0.
+/// handle or if there is no room to bring it into bank 0. A safe point for
+/// automatic polling.
 void *mos_handle_lock(mos_handle_t handle);
 
-/// Release one lock.
+/// Release one lock. Invalid handles and unlocked objects are ignored.
 void mos_handle_unlock(mos_handle_t handle);
 
 /// Slide every unlocked object (and module) in both pools together so free
@@ -131,23 +155,24 @@ uint8_t mos_defrag(void);
 uint8_t mos_cache_service(void);
 
 /// Call mos_cache_service automatically every `every`th time the runtime
-/// reaches one of its own safe points (allocating an object, locking one,
-/// loading a module). 0 (the default) turns it off.
+/// reaches one of its own safe points (allocating an object, locking one). 0
+/// (the default) turns it off. Module loads are not safe points: they happen
+/// inside the call gate with interrupts disabled.
 void mos_cache_auto_poll(uint8_t every);
 
 /// Extension points for storage tiers this library does not implement, both
 /// weak and by default doing nothing. mos_tier_demote is called when bank 0's
 /// pool must give up space and spilling to bank 1 has failed: move some
 /// unlocked object out of `bank` to an I/O-free faster tier (an REU) and return
-/// non-zero if it freed room. It runs inside malloc, so it must not do KERNAL
-/// or disk I/O and must not call malloc. mos_tier_writebehind is called only
-/// from mos_cache_service, never from inside malloc: this is where slow-tier
-/// (disk) writes belong.
+/// non-zero if it freed room (a claim that no pool unit was freed is ignored).
+/// It runs inside malloc, so it must not do KERNAL or disk I/O and must not
+/// call malloc. mos_tier_writebehind is called only from mos_cache_service,
+/// never from inside malloc, and only from ordinary code: this is where
+/// slow-tier (disk) writes belong.
 uint8_t mos_tier_demote(uint8_t bank);
 void mos_tier_writebehind(void);
 
-// ---- Diagnostics
-// -------------------------------------------------------------
+// ---- Diagnostics ------------------------------------------------------------
 
 struct mos_cache_stats {
   uint8_t mod_loads, mod_evictions; // modules
@@ -168,28 +193,33 @@ uint16_t mos_cache_pool_base(uint8_t bank);
 /// Free units in a pool, and its longest run of free units.
 uint8_t mos_cache_free_units(uint8_t bank);
 uint8_t mos_cache_max_run(uint8_t bank);
-/// Which bank an object is in now, and how many locks it holds.
+/// Which bank an object is in now (0xFF for an invalid handle), and how many
+/// locks it holds.
 uint8_t mos_handle_bank(mos_handle_t handle);
 uint8_t mos_handle_locks(mos_handle_t handle);
 
 // ---- Module table ABI (version 1)
-// -----------------------------------------------
+// --------------------------------------------
 //
 // A program that uses code modules defines these symbols (a hand-written module
 // set today; the toolchain will generate them). Entry i describes module i;
-// `count` entries each. All addresses are bank-0 addresses of the canonical
-// image, which is assembled at its own address; the loader relocates it.
+// there are __mos_mt_count entries of each array. All addresses are bank-0
+// addresses of the canonical image, which is assembled at its own address; the
+// loader relocates it.
 //
-//   const uint8_t  __mos_mt_count;      number of entries
-//   uint16_t       __mos_mt_addr[];     resident address, high byte 0 if not
-//   resident uint8_t        __mos_mt_cr[];       $FF00 value to run it under
-//   ($0E bank 0, $4E bank 1) volatile uint8_t __mos_mt_active[]; active-call
-//   count (the gate maintains it) volatile uint8_t __mos_mt_ref[];    CLOCK
-//   reference bit (the gate sets it) uint16_t       __mos_mt_stamp[];    load
-//   order (the runtime maintains it) const uint16_t __mos_mt_img[]; canonical
-//   image address; 0 = static (never loaded/evicted) const uint16_t
-//   __mos_mt_size[];     image size in bytes const uint16_t __mos_mt_reloc[];
-//   relocation table address
+// clang-format off
+//   const uint8_t    __mos_mt_count;     number of entries
+//   uint16_t         __mos_mt_addr[];    resident address; high byte 0 if not
+//   uint8_t          __mos_mt_cr[];      $FF00 to run it under ($0E bank 0,
+//                                        $4E bank 1)
+//   volatile uint8_t __mos_mt_active[];  active-call count (gate maintains it)
+//   volatile uint8_t __mos_mt_ref[];     CLOCK reference bit (gate sets it)
+//   uint16_t         __mos_mt_stamp[];   load order (runtime maintains it)
+//   const uint16_t   __mos_mt_img[];     canonical image address; 0 = static
+//                                        (never loaded or evicted)
+//   const uint16_t   __mos_mt_size[];    image size in bytes
+//   const uint16_t   __mos_mt_reloc[];   relocation table address
+// clang-format on
 //
 // Relocation table: repeated {1, off16} (a 16-bit value at base+off16) or
 // {2, lo_off16, hi_off16} (a value split across a LOW8 and a HIGH8 operand),
@@ -198,11 +228,13 @@ uint8_t mos_handle_locks(mos_handle_t handle);
 // self-modified operands stay correct) and writes the image back.
 
 /// Load module `id` for code running in `caller_bank` (0 or 1: which bank to
-/// prefer). Returns 0, or 1 if it cannot be placed.
+/// prefer). Returns 0 (also if it is already resident), 1 if it cannot be
+/// placed, 3 if there is no such module or it is static. (The call gate
+/// reports the same codes; its 2 means nesting too deep.)
 uint8_t mos_cache_module_load(uint8_t id, uint8_t caller_bank);
 
 /// Evict module `id`. Returns 0, 1 if it is active (pinned), 2 if it is not
-/// resident, 3 if it is static.
+/// resident, 3 if it is static, 4 if there is no such module.
 uint8_t mos_cache_module_evict(uint8_t id);
 
 /// Diagnostic hook, weak and doing nothing by default: called with the id of
@@ -212,20 +244,23 @@ void mos_cache_on_evict(uint8_t id);
 // ---- Host services for modules ----------------------------------------------
 //
 // Module code can call back into the runtime through the gate, like any module,
-// by naming a *host* entry of the module table: a static entry (image address 0)
-// whose "code" is the runtime's jump table. Reserve one table entry for it and
-// call mos_cache_set_host(id) once at startup (this links the jump table, cache-
-// host.s, only into programs that ask for it). From module code, with the host
-// at index `id`:
+// by naming a *host* entry of the module table: a static entry (image address
+// 0) whose "code" is the runtime's jump table. Reserve one table entry for it
+// and call mos_cache_set_host(id) once at startup (this links the jump table,
+// cache-host.s, only into programs that ask for it). From module code, with the
+// host at index `id` (CALL is `jsr __mos_call_gate; .byte id; .word offset`):
 //
-//   CALL id, 0    evict module A          -> A = 0 ok / 1 pinned / 2 not resident / 3 static
-//   CALL id, 3    lock the object A (handle low byte, X = high byte) in the
-//                 caller's bank -> pointer in A (low) / X (high), 0 if refused
-//   CALL id, 6    unlock the object A/X
-//   CALL id, 9    defragment both pools -> A = items moved
+// clang-format off
+//   CALL id, 0   evict module A -> A = 0 ok / 1 pinned / 2 not resident /
+//                3 static / 4 no such module
+//   CALL id, 3   lock the object A (handle low byte, X = high byte) in the
+//                caller's bank -> pointer in A (low) / X (high), 0 if refused
+//   CALL id, 6   unlock the object A/X
+//   CALL id, 9   defragment both pools -> A = items moved
+// clang-format on
 //
-// (CALL is `jsr __mos_call_gate; .byte id; .word offset`.) Arguments and results use
-// the registers as the gate passes them; __rc2-__rc4 may be used between calls.
+// Arguments and results use the registers as the gate passes them; __rc2-__rc4
+// may be used between calls.
 
 /// Register table entry `id` as the host. It must be a static entry (image 0).
 void mos_cache_set_host(uint8_t id);

@@ -4,8 +4,8 @@
 # per access. Env: MOS_CLANG, SDK_INSTALL, WORK (as m0_2/run.sh).
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
-MOS_CLANG="${MOS_CLANG:-/c/Users/mecha/git/llvm-mos-mechanik/build/bin/mos-clang.exe}"
-SDK_INSTALL="${SDK_INSTALL:-/c/Users/mecha/git/llvm-mos-sdk-mechanik/install}"
+MOS_CLANG="${MOS_CLANG:-mos-clang}"
+: "${SDK_INSTALL:?set SDK_INSTALL to the SDK install prefix (the directory holding bin/mos-c128.cfg)}"
 WORK="${WORK:-/tmp/mos_test}"; mkdir -p "$WORK"; cd "$WORK"
 "$MOS_CLANG" --config "$SDK_INSTALL/bin/mos-c128.cfg" -Os -o access_cost.prg \
   -Wl,-Map=access_cost.map "$HERE/access_cost.c"

@@ -5,8 +5,8 @@
 # 102) so the gate's zero-page temporaries fit in the ~102-byte pool.
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
-MOS_CLANG="${MOS_CLANG:-/c/Users/mecha/git/llvm-mos-mechanik/build/bin/mos-clang.exe}"
-SDK_INSTALL="${SDK_INSTALL:-/c/Users/mecha/git/llvm-mos-sdk-mechanik/install}"
+MOS_CLANG="${MOS_CLANG:-mos-clang}"
+: "${SDK_INSTALL:?set SDK_INSTALL to the SDK install prefix (the directory holding bin/mos-c128.cfg)}"
 WORK="${WORK:-/tmp/mos_test}"; mkdir -p "$WORK"; cd "$WORK"
 STAGE="${1:-gate_test}"
 "$MOS_CLANG" --config "$SDK_INSTALL/bin/mos-c128.cfg" -mlto-zp=60 -I"$HERE" $EXTRA_FLAGS \

@@ -5,6 +5,8 @@
 
 #include <string.h>
 
+#include "cache-internal.h"
+
 // Populates statically-placed bank-1 content (MOS_C128_BANK1_CODE/_DATA,
 // see bank1.h) at program startup. Ordinary PRG loading only populates
 // whichever bank is mapped at load time, so this content's bytes travel
@@ -113,8 +115,8 @@ void __c128bank1_load(void) {
                         (unsigned short)&__c128bank1_bss_size);
 }
 
-// Run-time copies between bank 0 and bank 1 (declared in bank1.h, which
-// cannot be included when the platform library itself is built), staged through
+// Run-time copies between bank 0 and bank 1 (declared in bank1.h and
+// cache-internal.h), staged through
 // the same Common-RAM scratch buffer (so using them costs no zero page beyond
 // the 16 bytes bank-1 placement already costs). The bank-1 side is an address,
 // not a pointer: see bank1.h.

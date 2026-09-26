@@ -3,18 +3,16 @@
 ; See https://github.com/llvm-mos/llvm-mos-sdk/blob/main/LICENSE for license
 ; information.
 
-; Bank-aware __mos_call_gate / exit_gate for relocatable code modules (cache.h), with a
+; Bank-aware call gate for relocatable code modules (cache.h), with a
 ; load-on-miss path. Linked only by programs that reference __mos_call_gate.
-; See work/M0_C128_BANKING_PLAN.md (llvm-mos-mechanik) for the design.
-; with a load-on-miss path. See work/M0_C128_BANKING_PLAN.md (llvm-mos-mechanik).
 ;
 ; A cross-module call site is:   jsr __mos_call_gate
 ;                                .byte module_id
 ;                                .word offset_in_module
-; __mos_call_gate dispatches to module_id's resident address + offset, loading the
-; module first if it is not resident (mos_cache_module_load, cache.c), switching RAM bank
-; if needed, and plants a frame so the callee's RTS lands in exit_gate, which
-; does the bookkeeping and returns to the call site.
+; The gate dispatches to module_id's resident address + offset, loading the
+; module first if it is not resident (mos_cache_module_load, cache.c),
+; switching RAM bank if needed, and plants a frame so the callee's RTS lands in
+; exit_gate, which does the bookkeeping and returns to the call site.
 ;
 ; Stack frame planted per call, top down:
 ;   exit_gate-1 (2), caller's $FF00 (1), caller's I flag (1), resume-1 (2)
@@ -28,9 +26,10 @@
 ; Registers: A/X/Y carry callee arguments and are preserved through
 ; dispatch; carry is cleared on dispatch. On return, A/X/Y and all flags
 ; except I come from the callee; I is restored to the caller's value.
-; Failure (module cannot be loaded, active-module stack full): nothing is
-; called; returns to the call site with carry SET, A = error code
-; (1 = out of memory, 2 = nesting too deep), X/Y as passed, I restored.
+; Failure (module cannot be loaded, active-module stack full, no such module):
+; nothing is called; returns to the call site with carry SET, A = error code
+; (1 = out of memory, 2 = nesting too deep, 3 = no such module), X/Y as
+; passed, I restored.
 
 .include "c128.inc"
 .include "imag.inc"
@@ -39,7 +38,8 @@ AMS_MAX = 16
 
 ; Zero-page pool is small (~100 bytes shared with the compiler), so gate
 ; temporaries that are never live at the same time share bytes.
-.zeropage gt_a, gt_x, gt_y, gt_i, __mos_gate_cr, gt_mod, gt_off, gt_ptr, gt_tgt, __mos_gate_ams_top
+.zeropage gt_a, gt_x, gt_y, gt_i, __mos_gate_cr, gt_mod, gt_off, gt_ptr
+.zeropage gt_tgt, __mos_gate_ams_top
 .globl __mos_gate_ams_top, __mos_gate_cr
 .section .zp.bss,"aw",@nobits
 gt_a:   .fill 1
@@ -104,6 +104,11 @@ __mos_call_gate:
 	lda gt_ptr
 	pha                  ; resume-1 is now on the stack
 	ldx gt_mod
+	cpx __mos_mt_count   ; a module the table does not have?
+	bcc .Lknown
+	lda #3
+	bne .Lfail
+.Lknown:
 	txa
 	asl
 	tay                  ; Y = 2*module_id (__mos_mt_addr entries are 16-bit)

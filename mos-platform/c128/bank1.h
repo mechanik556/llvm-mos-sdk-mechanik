@@ -90,6 +90,11 @@
 //   the full list and what is NOT usable). The area must be inside
 //   $0000-$0FFF.
 //
+// * C128 BASIC 7 keeps its variables in bank 1 (from $0400 up). Bank-1 memory
+//   that a program writes may therefore be memory BASIC's variables occupy: a
+//   program started from BASIC and then returning to it must not expect that
+//   BASIC's variables survive.
+//
 // * Initialized and zero-initialized bank-1 data are populated at program
 //   startup (bank1-load.c). Bank-1 memory is bank1's $1000-$BFFF.
 //
@@ -126,8 +131,7 @@ void c128_bank1_write(unsigned short bank1_dest, const void *src,
                       unsigned short size);
 
 /// Copy size bytes from bank-1 RAM at bank1_src to ordinary memory.
-void c128_bank1_read(void *dest, unsigned short bank1_src,
-                     unsigned short size);
+void c128_bank1_read(void *dest, unsigned short bank1_src, unsigned short size);
 
 #ifdef __cplusplus
 }

@@ -55,11 +55,13 @@ endfunction()
 #                        EMUTEST_COMMAND and VICE_LIBRETRO_CORE are set
 #   name          - target/test name; the source is <name>.c unless SOURCE is given
 #   SOURCE        - source file, to build one source with different link options
+#   EXTRA_SOURCES - further source files (for example assembly) linked in
 #   LINK_OPTIONS  - extra link options
 #   RESTORE_RANGE - c128: hex start-end of the Common-RAM code area the runner
 #                   checks is restored at exit (default: the platform default)
 function(add_vice_test name)
-  cmake_parse_arguments(ARG "" "SOURCE;RESTORE_RANGE" "LINK_OPTIONS;EXTRA_SOURCES" ${ARGN})
+  cmake_parse_arguments(ARG "" "SOURCE;RESTORE_RANGE" "LINK_OPTIONS;EXTRA_SOURCES"
+    ${ARGN})
   if(NOT ARG_SOURCE)
     set(ARG_SOURCE ${name}.c)
   endif()

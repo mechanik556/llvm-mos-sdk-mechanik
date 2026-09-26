@@ -24,11 +24,13 @@ Common-RAM-table gate variant, were removed when the SDK runtime replaced them; 
 are in git history.)
 
 Run: `ninja mos-platform/install` in the SDK build directory, then
-`python prototypes/c128-dynamic/check_m0.py`. The tests dump memory at
+`python prototypes/c128-dynamic/check_m0.py` with `SDK_INSTALL` set to the SDK
+install prefix (the directory holding `bin/mos-c128.cfg`), and `MOS_CLANG` and
+`VICE_X128` if `mos-clang` and `x128` are not on `PATH`. The tests dump memory at
 `__after_main` and compare internal state (`run_vice_syms.sh`), so they are not
-self-checking in the `test_set_result()` sense; paths default to this
-machine's layout and can be overridden with `MOS_CLANG`, `SDK_INSTALL`,
-`VICE_X128`.
+self-checking in the `test_set_result()` sense. The scripts use Windows tools
+(`taskkill`, `tasklist`, `cygpath`) and expect Git Bash; they belong to this
+fork's development workflow and are not part of the SDK.
 
 The static bank-1 placement it builds on (`c128_bank1_call`, `bank1.h`) is
 tested in `test/c128`.

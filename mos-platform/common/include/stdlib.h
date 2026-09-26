@@ -171,7 +171,8 @@ size_t __heap_bytes_free();
  * a program (or a runtime library) may define its own, which is then used
  * instead. malloc, calloc, realloc, aligned_alloc and operator new call it when
  * a request cannot be satisfied, instead of failing at once: `needed` is the
- * size in bytes of the chunk (including its header) that must be found. The
+ * size in bytes of the chunk (including its header) that must be found (for
+ * aligned_alloc, at least that: it may need more to reach the alignment). The
  * hook may free memory (call free) and returns non-zero if it did, in which
  * case the allocation is retried, or zero if it has nothing more to give, in
  * which case the allocation fails as usual (returns NULL). A request larger

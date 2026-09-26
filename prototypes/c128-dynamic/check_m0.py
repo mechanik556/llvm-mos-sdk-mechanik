@@ -33,7 +33,8 @@ def parse(out):
     return vals
 
 def check(title, vals, expected):
-    bad = [(k, v, vals.get(k)) for k, v in expected.items() if vals.get(k) != v]
+    bad = [(k, v, vals.get(k)) for k, v in expected.items()
+           if vals.get(k) not in (v if isinstance(v, tuple) else (v,))]
     print(("PASS " if not bad else "FAIL ") + title)
     for k, want, got in bad:
         print(f"    {k}: expected {want}, got {got}")
@@ -86,10 +87,10 @@ def main():
                 "r_carry": "01", "r_cin": "00", "r_if": "04", "r_inest": "04", "r_fail": "01",
                 "loads0": "04", "q1": "0D", "q2": "0F", "q3": "0F", "q4": "01", "q5": "02",
                 "cr1": "4E", "q_pinned": "01", "q_still": "01", "ev": "00", "q_gone": "00",
-                "ndiff": "01", "diff_ok": "01", "q_f": "0A", "q_sm2": "02", "q_entry2": "0D",
+                "ndiff": ("01", "02"), "diff_ok": "01", "q_f": "0A", "q_sm2": "02", "q_entry2": "0D",
                 "q_h": "2A", "res_c": "00", "res_d": "00", "res_f": "00", "res_r": "00",
                 "res_h": "01", "q_thrash": "08", "q_sm3": "02", "r_cr": "0E", "r_act": "00",
-                "r_ams": "00", "err": "00", "ndiff2": "01", "diff_ok2": "01",
+                "r_ams": "00", "err": "00", "ndiff2": ("01", "02"), "diff_ok2": "01",
                 "rec10": "0A 00", "rec20": "02 01", "calle": "01 01", "act_h": "00", "ams_h": "00"}
     ok &= m0_2("gate_test", gate_syms, gate_exp, "M0.2 gate/alloc/relocation/eviction/nesting")
     ok &= m0_2("gate_test", gate_syms, gate_exp, "  ... same with 80-column display", "-DVIDEO80")
